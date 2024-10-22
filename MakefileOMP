@@ -1,0 +1,26 @@
+CC := g++
+NVC := nvc
+AR := ar
+INCLUDES :=
+FLAGS := -O3 -g
+CFLAGS :=  -lgomp  
+FLAGS_OMP := -mp=gpu -gpu=cc80 -fopenmp  -Minfo=mp
+LIBS = -lm
+
+OBJSORDERED_OMP = openmp_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o io_utils.o
+OBJSDRIVER1 = cg_driver.o
+OBJSDRIVER2 = cg_driver2.o
+OBJSDRIVER3 = mm_driver.o
+# Rules                                                                         
+all: lap_omp_laplacian lap_omp_cg lap_omp_spmv
+%.o: %.c
+	${NVC} ${CFLAGS} ${FLAGS_OMP} ${INCLUDES} -o $@ -c $<
+lap_omp_laplacian: ${OBJSORDERED_OMP} ${OBJSDRIVER1}
+	${NVC} ${CFLAGS_OMP}  -o $@ ${OBJSORDERED_OMP} ${OBJSDRIVER1} ${LIBS}
+lap_omp_cg: ${OBJSORDERED_OMP} ${OBJSDRIVER2}
+	${NVC} ${CFLAGS_OMP}  -o $@ ${OBJSORDERED_OMP} ${OBJSDRIVER2} ${LIBS}
+lap_omp_spmv: ${OBJSORDERED_OMP} ${OBJSDRIVER3}
+	${NVC} ${CFLAGS_OMP}  -o $@ ${OBJSORDERED_OMP} ${OBJSDRIVER3} ${LIBS}
+
+clean:
+	rm -f *.o lap_omp_laplacian lap_omp_spmv lap_omp_cg

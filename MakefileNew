@@ -1,0 +1,46 @@
+CC := g++
+NVCC := nvcc
+NVC := nvc
+AR := ar
+INCLUDES  := openmp_blas.h
+CUDA_LIBS := -lcusparse -lcublas
+NVCC_FLAGS := -arch=sm_80  
+CPP_FLAGS := -x cu
+FLAGS := -O3 -g
+CFLAGS :=  -lgomp  
+FLAGS_OMP := -mp=gpu -gpu=cc80 -fopenmp  -Minfo=mp
+LIBS = -lm
+SRC = simple_blas.c blas.c GS.c it_jacobi.c line_jacobi.c prec.c cg.c cg_driver.c
+OBJS := $(foreach f,$(SRC),$(f:%.c=%.o))
+#OBJS = simple_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o cg_driver.o
+
+SRCOMP = openmp_blas.c
+OBJSOMP = openmp_blas.o
+SRCCUDA = cuda_blas.cu devMem.cpp
+#OBJSCUDA = cuda_blas.o cudaMem.o
+OBJSCUDA := $(foreach f,$(SRCCUDA),$(f:%.cu=%.o))
+OBJSORDERED = devMem.o  cuda_blas.o   simple_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o cg_driver.o
+OBJSORDERED_OMP =  simple_blas.o blas.o openmp_blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o cg_driver.o
+# Rules                                                                         
+all: $(OBJS) $(OBJSCUDA)  lap_gpu
+#$(OBJS): $(SRC)
+#	${CC} ${FLAGS} ${INCLUDES} -o $@ -c $<
+%.o: %.c
+	${CC} ${FLAGS} ${INCLUDES} -o $@ -c $<
+%.o: %.cu
+	${NVCC} ${NVCC_FLAGS} ${FLAGS} ${CUDA_LIBS} -o $@ -c $<
+%.o: %.cpp
+	${NVCC} ${NVCC_FLAGS} ${CPP_FLAGS} ${FLAGS} ${CUDA_LIBS} -o $@ -c $<
+
+lap_gpu: ${OBJSORDERED}
+	${NVCC} ${CFLAGS} ${NVCC_FLAGS} -I${INCLUDES} -o $@ ${OBJSORDERED} ${LIBS} ${CUDA_LIBS}
+#$(OBJSOMP): $(SRCOMP)
+#	${NVC} ${FLAGS_OMP} -o $@ -c $<
+
+#lap: $(OBJS)
+#	$(CC) -o $@ $(OBJS)
+#lap: ${OBJSORDERED}
+#	 ${NVCC} ${NVCC_FLAGS} ${CFLAGS} -I${INCLUDES} -o $@ ${OBJSORDERED} ${LIBS} ${CUDA_LIBS}
+#lap_omp: ${OBJSORDERED_OMP}
+#	${NVC} ${FLAGS_OMP} -I${INCLUDES} -o $@ ${OBJSORDERED_OMP} ${LIBS}
+

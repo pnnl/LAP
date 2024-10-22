@@ -1,0 +1,43 @@
+CC := g++
+NVCC := nvcc
+HIPCC := hipcc
+AR := ar
+INCLUDES  := 
+CUDA_LIBS := -lcusparse -lcublas
+NVCC_FLAGS := -arch=sm_80 -rdc=true 
+FLAGS := -O3 -g
+CFLAGS :=  -lgomp  
+FLAGS_OMP := -mp=gpu -gpu=cc80 -fopenmp  -Minfo=mp
+FLAGS_HIP := -D__HIP_PLATFORM_HCC__
+LIBS_HIP := -L/rocm-5.6.0/lib -lrocsparse -L/opt/rocm-5.1.0/lib -lrocblas 
+INCLUDES_HIP := -I/opt/rocm-5.6.0/include 
+LIBS = -lm
+
+SRCOMP = openmp_blas.c
+OBJSOMP = openmp_blas.o
+SRCCUDA = cuda_blas.cu devMem.c
+SRCHIP = hip_blas.cpp devMem.cpp
+OBJSORDERED = cudaMem.o  cuda_blas.o   simple_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o  io_utils.o
+OBJSORDERED_OMP =  simple_blas.o blas.o openmp_blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o io_utils.o
+OBJSORDERED_HIP =  simple_blas.o blas.o hip_blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o devMem.o io_utils.o
+OBJSDRIVER1 = cg_driver.o
+OBJSDRIVER2 = cg_driver2.o
+OBJSDRIVER3 = mm_driver.o
+# Rules                                                                         
+all: lap_hip_laplacian lap_hip_cg lap_hip_spmv
+%.o: %.c
+	${CC} ${FLAGS} ${INCLUDES} -o $@ -c $<
+%.o: %.cpp
+	${HIPCC} ${FLAGS_HIP} ${INCLUDES_HIP} -o $@ -c $<
+$(OBJSOMP): $(SRCOMP)
+	${NVC} ${FLAGS_OMP} -o $@ -c $<
+
+lap_hip_laplacian: ${OBJSORDERED_HIP} ${OBJSDRIVER1}
+	${HIPCC} ${FLAGS_HIP} ${INCLUDES} -o $@ ${OBJSORDERED_HIP} ${OBJSDRIVER1}  ${LIBS} ${LIBS_HIP} 
+lap_hip_cg: ${OBJSORDERED_HIP} ${OBJSDRIVER2}
+	${HIPCC} ${FLAGS_HIP} ${INCLUDES} -o $@ ${OBJSORDERED_HIP} ${OBJSDRIVER2}  ${LIBS} ${LIBS_HIP} 
+lap_hip_spmv: ${OBJSORDERED_HIP} ${OBJSDRIVER3}
+	${HIPCC} ${FLAGS_HIP} ${INCLUDES} -o $@ ${OBJSORDERED_HIP} ${OBJSDRIVER3}  ${LIBS} ${LIBS_HIP} 
+
+clean:
+	rm -f *.o lap_hip_laplacian lap_hip_cg lap_hip_spmv 

@@ -1,0 +1,20 @@
+CC := gcc
+AR := ar
+INCLUDES :=
+FLAGS := -O3 -g
+CFLAGS :=  -lomp -std=c99 
+FLAGS_OMP := -fopenmp 
+LIBS = -lm
+SRC = simple_blas.c blas.c GS.c it_jacobi.c line_jacobi.c prec.c cg.c cg_driver.c
+OBJS := $(foreach f,$(SRC),$(f:%.c=%.o))
+
+SRCOMP = openmp_blas.c
+OBJSOMP = openmp_blas.o
+OBJSORDERED_OMP =  simple_blas.o  openmp_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o cg_driver.o
+# Rules                                                                         
+all: $(OBJSOMP)  lap_omp_nogpu
+%.o: %.c
+	${CC} ${CFLAGS} ${FLAGS_OMP} ${INCLUDES} -o $@ -c $<
+lap_omp_nogpu: ${OBJSORDERED_OMP}
+	${CC} ${CFLAGS_OMP} ${INCLUDES} -o $@ ${OBJSORDERED_OMP} ${LIBS}
+

@@ -1,0 +1,41 @@
+CC := g++
+NVCC := nvcc
+AR := ar
+INCLUDES  :=  
+CONF_FLAGS := -DV100=0 -DNOACC=0 -DCUDA=1 -DOPENMP=0 -DHIP=0
+CUDA_LIBS := -lcusparse -lcublas
+NVCC_FLAGS := -arch=sm_80  
+CPP_FLAGS := -x cu
+FLAGS := -O3 -g
+CFLAGS :=   
+FLAGS_OMP := -mp=gpu -gpu=cc80 -fopenmp  -Minfo=mp
+LIBS = -lm
+
+SRCOMP = openmp_blas.c
+OBJSOMP = openmp_blas.o
+SRCCUDA = cuda_blas.cu devMem.cpp
+OBJSCUDA := $(foreach f,$(SRCCUDA),$(f:%.cu=%.o))
+OBJSORDERED = devMem.o cuda_blas.o simple_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o io_utils.o 
+OBJSDRIVER1 = cg_driver.o
+OBJSDRIVER2 = cg_driver2.o
+OBJSDRIVER3 = mm_driver.o
+
+# Rules                                                                         
+all: lap_laplacian lap_cg lap_spmv
+
+%.o: %.c
+	${CC} ${CONF_FLAGS} ${FLAGS} ${INCLUDES} -o $@ -c $<
+%.o: %.cu
+	${NVCC} ${CONF_FLAGS} ${NVCC_FLAGS} ${FLAGS} ${CUDA_LIBS} -o $@ -c $<
+%.o: %.cpp
+	${NVCC} ${CONF_FLAGS} ${NVCC_FLAGS} ${CPP_FLAGS} ${FLAGS} ${CUDA_LIBS} -o $@ -c $<
+
+lap_laplacian: ${OBJSORDERED} ${OBJSDRIVER1}
+	 ${NVCC} ${NVCC_FLAGS} ${CFLAGS}  -o $@ ${OBJSORDERED} ${OBJSDRIVER1} ${LIBS} ${CUDA_LIBS}
+lap_cg: ${OBJSORDERED} ${OBJSDRIVER2}
+	 ${NVCC} ${NVCC_FLAGS} ${CFLAGS}  -o $@ ${OBJSORDERED} ${OBJSDRIVER2} ${LIBS} ${CUDA_LIBS}
+lap_spmv: ${OBJSORDERED} ${OBJSDRIVER3}
+	 ${NVCC} ${NVCC_FLAGS} ${CFLAGS}  -o $@ ${OBJSORDERED} ${OBJSDRIVER3} ${LIBS} ${CUDA_LIBS}
+
+clean:
+	rm -f *.o lap_laplacian lap_cg lap_spmv 

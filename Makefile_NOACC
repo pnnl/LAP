@@ -1,0 +1,27 @@
+CC := g++
+AR := ar
+CPP_FLAGS := -x cu
+FLAGS := -O3 -g
+LIBS = -lm
+SRC = simple_blas.c blas.c GS.c it_jacobi.c line_jacobi.c prec.c cg.c cg_driver2.c
+OBJS := $(foreach f,$(SRC),$(f:%.c=%.o))
+#OBJS = simple_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o cg_driver2.o
+
+OBJSORDERED =   simple_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o cg_driver2.o
+# Rules                                                                         
+all: $(OBJS)  lap
+#$(OBJS): $(SRC)
+#	${CC} ${FLAGS} ${INCLUDES} -o $@ -c $<
+%.o: %.c
+	${CC} ${FLAGS} ${INCLUDES} -o $@ -c $<
+
+lap: ${OBJSORDERED}
+	${CC} ${CFLAGS} -o $@ ${OBJSORDERED} ${LIBS} 
+
+#lap: $(OBJS)
+#	$(CC) -o $@ $(OBJS)
+#lap: ${OBJSORDERED}
+#	 ${NVCC} ${NVCC_FLAGS} ${CFLAGS} -I${INCLUDES} -o $@ ${OBJSORDERED} ${LIBS} ${CUDA_LIBS}
+#lap_omp: ${OBJSORDERED_OMP}
+#	${NVC} ${FLAGS_OMP} -I${INCLUDES} -o $@ ${OBJSORDERED_OMP} ${LIBS}
+
