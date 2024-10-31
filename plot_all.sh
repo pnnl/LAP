@@ -7,7 +7,7 @@ RES_HOME="./power_results"
 
 
 PRECOND=('GS_std' 'GS_it' 'GS_it2' 'it_jacobi' 'line_jacobi' 'ichol')
-MATRIX=('Fault_639/Fault_639.mtx' 'G3_circuit/G3_circuit.mtx' 'Serena/Serena.mtx' 'thermal2/thermal2.mtx' 'af_0_k101/af_0_k101.mtx' 'Hook_1498/Hook_1498.mtx')
+MATRIX=('Fault_639/Fault_639.mtx' 'G3_circuit/G3_circuit.mtx' 'Serena/Serena.mtx' 'thermal2/thermal2.mtx' 'af_0_k101/af_0_k101.mtx' 'Hook_1498/Hook_1498.mtx' 'af_5_k101/af_5_k101.mtx' )
 declare -a time_res
 mkdir -p plots_cg
 cd plots_cg
