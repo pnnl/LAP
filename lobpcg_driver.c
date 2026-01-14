@@ -1,11 +1,12 @@
 /*
  * LOBPCG Driver - Eigenvalue solver for sparse symmetric matrices
  * 
- * Usage: ./lap_lobpcg <matrix.mtx> <preconditioner> <tolerance> <maxit> <M> <K> <nev>
+ * Usage: ./lap_lobpcg <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev>
  * 
  * Arguments:
  *   matrix.mtx    - Matrix file in Matrix Market format
- *   preconditioner - Preconditioner type: "it_jacobi", "line_jacobi", "GS_it", "GS_it2", "GS_std"
+ *   mode          - Matrix mode: "normal" (use matrix as-is) or "laplacian" (convert to graph Laplacian)
+ *   preconditioner - Preconditioner type: "none", "it_jacobi", "line_jacobi", "GS_it", "GS_it2", "GS_std"
  *   tolerance     - Convergence tolerance for residual norm
  *   maxit         - Maximum number of LOBPCG iterations
  *   M             - Outer iterations for preconditioner
@@ -56,10 +57,11 @@ int main(int argc, char *argv[]) {
   /* Seed random number generator */
   srand(time(NULL));
   
-  if (argc < 8) {
-    printf("Usage: %s <matrix.mtx> <preconditioner> <tolerance> <maxit> <M> <K> <nev>\n", argv[0]);
+  if (argc < 9) {
+    printf("Usage: %s <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev>\n", argv[0]);
     printf("  matrix.mtx     - Matrix file in Matrix Market format\n");
-    printf("  preconditioner - Preconditioner type: it_jacobi, line_jacobi, GS_it, GS_it2, GS_std\n");
+    printf("  mode           - Matrix mode: 'normal' or 'laplacian'\n");
+    printf("  preconditioner - Preconditioner type: none, it_jacobi, line_jacobi, GS_it, GS_it2, GS_std\n");
     printf("  tolerance      - Convergence tolerance (e.g., 1e-8)\n");
     printf("  maxit          - Maximum LOBPCG iterations\n");
     printf("  M              - Outer iterations for preconditioner\n");
@@ -69,12 +71,22 @@ int main(int argc, char *argv[]) {
   }
   
   const char *matrixFileName = argv[1];
-  const char *precName = argv[2];
-  real_type lobpcg_tol = atof(argv[3]);
-  int lobpcg_maxit = atoi(argv[4]);
-  int M = atoi(argv[5]);
-  int K = atoi(argv[6]);
-  int nev = atoi(argv[7]);
+  const char *matrixMode = argv[2];
+  const char *precName = argv[3];
+  real_type lobpcg_tol = atof(argv[4]);
+  int lobpcg_maxit = atoi(argv[5]);
+  int M = atoi(argv[6]);
+  int K = atoi(argv[7]);
+  int nev = atoi(argv[8]);
+  
+  /* Validate matrix mode */
+  int use_laplacian = 0;
+  if (strcmp(matrixMode, "laplacian") == 0) {
+    use_laplacian = 1;
+  } else if (strcmp(matrixMode, "normal") != 0) {
+    printf("Error: Invalid matrix mode '%s'. Use 'normal' or 'laplacian'.\n", matrixMode);
+    return 1;
+  }
   
   /* Read and setup matrix */
   mmatrix *A, *L, *U, *D;
@@ -83,17 +95,28 @@ int main(int argc, char *argv[]) {
   U = (mmatrix *) calloc(1, sizeof(mmatrix));
   D = (mmatrix *) calloc(1, sizeof(mmatrix));
   
-  /* Read as adjacency file and convert to Laplacian for symmetric matrices */
-  read_adjacency_file(matrixFileName, A);
-  coo_to_csr(A);
-  int weighted = 0;  /* Unweighted Laplacian */
-  create_L_and_split(A, L, U, D, weighted);
+  /* Read matrix file */
+  if (use_laplacian) {
+    /* Use read_adjacency_file which adds diagonal entries needed for Laplacian */
+    read_adjacency_file(matrixFileName, A);
+    coo_to_csr(A);
+    /* Convert adjacency matrix to graph Laplacian: L = D - A */
+    /* This makes 0 the smallest eigenvalue for connected graphs */
+    create_L_and_split(A, L, U, D, 0);  /* 0 = unweighted */
+    
+  } else {
+    /* Use matrix as-is */
+    read_mm_file(matrixFileName, A);
+    coo_to_csr(A);
+    split(A, L, U, D);
+  }
   
   printf("\n\n");
   printf("======================================================\n");
   printf("LOBPCG Eigenvalue Solver\n");
   printf("======================================================\n");
   printf("  Matrix file       : %s\n", matrixFileName);
+  printf("  Matrix mode       : %s\n", use_laplacian ? "laplacian (L = D - A)" : "normal");
   printf("  Matrix size       : %d x %d\n", A->n, A->n);
   printf("  Matrix nnz        : %d\n", A->nnz_unpacked);
   printf("  Num eigenvalues   : %d\n", nev);
@@ -290,6 +313,18 @@ int main(int argc, char *argv[]) {
                                           prec_data->unnz, prec_data->uia, prec_data->uja, prec_data->ua);
   }
   
+  /* Initialize ichol preconditioner */
+  if (strcmp(prec_data->prec_op, "ichol") == 0) {
+    prec_data->ichol_vals = (real_type *) mallocForDevice(prec_data->ichol_vals, A->nnz_unpacked, sizeof(real_type));
+    memcpyDevice(prec_data->ichol_vals, A->csr_vals, A->nnz_unpacked, sizeof(real_type), "D2D");
+    
+    initialize_ichol(A->n, 
+                     A->nnz_unpacked, 
+                     A->csr_ia, 
+                     A->csr_ja, 
+                     prec_data->ichol_vals);
+  }
+  
 #else /* CPU / OpenMP */
   prec_data->lia = L->csr_ia;
   prec_data->lja = L->csr_ja;
@@ -377,6 +412,11 @@ int main(int argc, char *argv[]) {
   freeDevice(prec_data->aux_vec1);
   freeDevice(prec_data->aux_vec2);
   freeDevice(prec_data->aux_vec3);
+  
+  /* Free ichol_vals if it was allocated */
+  if (strcmp(prec_data->prec_op, "ichol") == 0) {
+    freeDevice(prec_data->ichol_vals);
+  }
   
   free(h_A_ia);
   free(h_A_ja);

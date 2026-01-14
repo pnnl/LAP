@@ -16,7 +16,7 @@
 #endif
 
 /* Small constant for numerical stability */
-#define LOBPCG_EPS 1e-12
+#define LOBPCG_EPS 1e-8
 
 /*
  * CGS2: Classical Gram-Schmidt with re-orthogonalization
@@ -98,6 +98,11 @@ void cgs2(int n, int k, real_type *V) {
     nrm = nrm2(n, vi);
     if (nrm > LOBPCG_EPS) {
       scal(n, 1.0 / nrm, vi);
+    } else {
+      /* Vector is nearly zero after orthogonalization - set to small random vector */
+      /* This prevents numerical issues with zero columns */
+      vec_set(n, 0.0, vi);
+      vi[i % n] = 1.0;  /* Set one element to 1 to avoid zero vector */
     }
   }
   
@@ -316,9 +321,16 @@ void lobpcg(int n,
   real_type *h_Lambda = (real_type*) calloc(nev * nev, sizeof(real_type));
   real_type *h_res_norms = (real_type*) calloc(nev, sizeof(real_type));
   real_type *h_lambda = (real_type*) calloc(nev, sizeof(real_type));
+  real_type A_norm = 1.0;  /* Will be estimated from first iteration */
   int *locked = (int*) calloc(nev, sizeof(int));
   
+  /* Pre-allocated workspace for orthogonalization coefficient matrices */
+  real_type *h_orth_coeff = (real_type*) calloc(nev * nev, sizeof(real_type));
+  
 #if (CUDA || HIP)
+  /* Pre-allocate device workspace for orthogonalization */
+  real_type *d_orth_coeff;
+  d_orth_coeff = (real_type *) mallocForDevice(d_orth_coeff, nev * nev, sizeof(real_type));
   /* Device workspace */
   real_type *d_AX, *d_W, *d_P, *d_R;
   real_type *d_X_lock;
@@ -390,31 +402,19 @@ void lobpcg(int n,
     /* Lambda = X' * AX  (k_active x k_active) */
     /* Using GEMM: Lambda = X^T * AX */
 #if (CUDA || HIP)
-    /* For GPU: need to copy X and AX to do the multiplication, or use device GEMM */
-    /* We'll compute on host for the small dense matrix */
-    real_type *h_X_temp = (real_type *) malloc(n * k_active * sizeof(real_type));
-    real_type *h_AX_temp = (real_type *) malloc(n * k_active * sizeof(real_type));
-    memcpyDevice(h_X_temp, X, n * k_active, sizeof(real_type), "D2H");
-    memcpyDevice(h_AX_temp, AX, n * k_active, sizeof(real_type), "D2H");
-    
-    /* Lambda = X^T * AX on host */
-    for (int i = 0; i < k_active; ++i) {
-      for (int j = 0; j < k_active; ++j) {
-        real_type sum = 0.0;
-        for (int l = 0; l < n; ++l) {
-          sum += h_X_temp[l + i * n] * h_AX_temp[l + j * n];
-        }
-        h_Lambda[i + j * k_active] = sum;  /* Column-major */
-      }
+    /* Compute Lambda = X'*AX on device using rocBLAS GEMM, then copy small result to host */
+    {
+      real_type one_rq = 1.0, zero_rq = 0.0;
+      /* Use d_orth_coeff as device buffer for Lambda (k_active x k_active) */
+      gemm("T", "N", k_active, k_active, n, &one_rq, X, n, AX, n, &zero_rq, d_orth_coeff, k_active);
+      /* Copy result to host */
+      memcpyDevice(h_Lambda, d_orth_coeff, k_active * k_active, sizeof(real_type), "D2H");
     }
     
     /* Diagonal elements are the eigenvalue estimates */
     for (int i = 0; i < k_active; ++i) {
       h_lambda[i] = h_Lambda[i + i * k_active];
     }
-    
-    free(h_X_temp);
-    free(h_AX_temp);
 #else
     /* CPU version: Lambda = X^T * AX using GEMM */
     real_type one_h = 1.0, zero_h = 0.0;
@@ -427,32 +427,27 @@ void lobpcg(int n,
 #endif
     
     /* ------------------------------ */
-    /* Residuals: R = AX - X * Lambda */
+    /* Residuals: R = AX - X * Lambda (MATLAB style, using full Lambda matrix) */
     /* ------------------------------ */
-    /* R = AX - X * Lambda  where Lambda is k_active x k_active */
-    /* First copy AX to R, then R = R - X * Lambda */
-    for (int i = 0; i < k_active; ++i) {
-      vec_copy(n, AX + i * n, R + i * n);
+    /* R = AX - X * Lambda where Lambda = X' * AX (k_active x k_active) */
+    {
+      real_type one_res = 1.0, neg_one_res = -1.0;
+      /* First copy AX to R */
+      for (int i = 0; i < k_active; ++i) {
+        vec_copy(n, AX + i * n, R + i * n);
+      }
+      /* Then R = R - X * Lambda = AX - X * Lambda */
+      /* h_Lambda is on host, need to use it for GEMM */
+#if (CUDA || HIP)
+      /* Copy h_Lambda to device for GEMM */
+      memcpyDevice(d_orth_coeff, h_Lambda, k_active * k_active, sizeof(real_type), "H2D");
+      gemm("N", "N", n, k_active, k_active, &neg_one_res, X, n, d_orth_coeff, k_active, &one_res, R, n);
+#else
+      gemm("N", "N", n, k_active, k_active, &neg_one_res, X, n, h_Lambda, k_active, &one_res, R, n);
+#endif
     }
     
-#if (CUDA || HIP)
-    /* Copy Lambda to device and do GEMM */
-    real_type *d_Lambda_temp;
-    d_Lambda_temp = (real_type *) mallocForDevice(d_Lambda_temp, k_active * k_active, sizeof(real_type));
-    memcpyDevice(d_Lambda_temp, h_Lambda, k_active * k_active, sizeof(real_type), "H2D");
-    
-    real_type neg_one_h = -1.0, one_h2 = 1.0;
-    /* R = R - X * Lambda = -1.0 * X * Lambda + 1.0 * R */
-    gemm("N", "N", n, k_active, k_active, &neg_one_h, X, n, d_Lambda_temp, k_active, &one_h2, R, n);
-    
-    freeDevice(d_Lambda_temp);
-#else
-    /* CPU: R = R - X * Lambda */
-    real_type neg_one_h = -1.0, one_h2 = 1.0;
-    gemm("N", "N", n, k_active, k_active, &neg_one_h, X, n, h_Lambda, k_active, &one_h2, R, n);
-#endif
-    
-    /* Compute residual norms */
+    /* Compute residual norms (absolute, like MATLAB: res = vecnorm(R)) */
     compute_col_norms(n, k_active, R, h_res_norms);
     
     /* Print iteration info */
@@ -460,7 +455,8 @@ void lobpcg(int n,
     for (int i = 0; i < k_active; ++i) {
       if (h_res_norms[i] > max_res) max_res = h_res_norms[i];
     }
-    printf("LOBPCG: it %4d  max residual = %.3e\n", iter, max_res);
+    printf("LOBPCG: it %4d  max_res=%.8e  lambda[0]=%.8e\n", iter, max_res, h_lambda[0]);
+    
     
     if (res_history != NULL) {
       for (int i = 0; i < k_active; ++i) {
@@ -471,24 +467,25 @@ void lobpcg(int n,
     /* ------------------------------ */
     /* Lock converged eigenpairs      */
     /* ------------------------------ */
+    /* Use absolute residual for convergence (like MATLAB: locked = res < tol) */
     int any_locked = 0;
     for (int i = 0; i < k_active; ++i) {
       locked[i] = (h_res_norms[i] < tol) ? 1 : 0;
       if (locked[i]) {
         any_locked = 1;
-        printf("LOBPCG:   Eigenpair %d converged, lambda = %.10e, res = %.3e\n", 
-               n_locked + 1, h_lambda[i], h_res_norms[i]);
       }
     }
     
-    /* Move locked eigenpairs - simplified: just track count for now */
-    /* In full implementation, would compact active vectors */
+    /* Move locked eigenpairs and compact active vectors */
     if (any_locked) {
+      /* First, copy locked eigenpairs to X_lock and lambda */
       for (int i = 0; i < k_active; ++i) {
         if (locked[i]) {
-          /* Copy to locked storage */
+          /* Copy to locked storage with correct column index */
           vec_copy(n, X + i * n, X_lock + n_locked * n);
           lambda[n_locked] = h_lambda[i];
+          printf("LOBPCG:   Eigenpair %d converged at iter %d, lambda = %.8e, res = %.8e\n", 
+                 n_locked + 1, iter, h_lambda[i], h_res_norms[i]);
           n_locked++;
         }
       }
@@ -496,6 +493,30 @@ void lobpcg(int n,
       /* Check if all converged */
       if (n_locked >= nev) {
         printf("LOBPCG: All %d eigenpairs converged\n", nev);
+        break;
+      }
+      
+      /* Compact X, R, and P to remove locked columns (like MATLAB: X = X(:, ~locked)) */
+      int write_idx = 0;
+      for (int i = 0; i < k_active; ++i) {
+        if (!locked[i]) {
+          if (write_idx != i) {
+            vec_copy(n, X + i * n, X + write_idx * n);
+            vec_copy(n, R + i * n, R + write_idx * n);
+            if (has_P) {
+              vec_copy(n, P + i * n, P + write_idx * n);
+            }
+            h_lambda[write_idx] = h_lambda[i];
+          }
+          write_idx++;
+        }
+      }
+      
+      /* Update k_active after compaction */
+      k_active = write_idx;
+      
+      if (k_active <= 0) {
+        printf("LOBPCG: All eigenpairs converged after compaction\n");
         break;
       }
     }
@@ -510,47 +531,37 @@ void lobpcg(int n,
       prec_function(ia, ja, a, nnz, prec_data, R + i * n, W + i * n);
     }
     
-    /* ------------------------------ */
-    /* Orthogonalize W against locked vectors */
-    /* ------------------------------ */
-    if (n_locked > 0) {
-      for (int i = 0; i < k_active; ++i) {
-        real_type *wi = W + i * n;
-        for (int j = 0; j < n_locked; ++j) {
-          real_type *xlj = X_lock + j * n;
-          real_type alpha_orth = dot(n, xlj, wi);
-          axpy(n, -alpha_orth, xlj, wi);
-        }
-      }
+    
+    /* Orthogonalize W against X: W = W - X * (X' * W) */
+    {
+      real_type one_orth = 1.0, zero_orth = 0.0, neg_one_orth = -1.0;
+#if (CUDA || HIP)
+      gemm("T", "N", k_active, k_active, n, &one_orth, X, n, W, n, &zero_orth, d_orth_coeff, k_active);
+      gemm("N", "N", n, k_active, k_active, &neg_one_orth, X, n, d_orth_coeff, k_active, &one_orth, W, n);
+#else
+      gemm("T", "N", k_active, k_active, n, &one_orth, X, n, W, n, &zero_orth, h_orth_coeff, k_active);
+      gemm("N", "N", n, k_active, k_active, &neg_one_orth, X, n, h_orth_coeff, k_active, &one_orth, W, n);
+#endif
     }
     
-    /* Orthogonalize W against X */
-    for (int i = 0; i < k_active; ++i) {
-      real_type *wi = W + i * n;
-      for (int j = 0; j < k_active; ++j) {
-        real_type *xj = X + j * n;
-        real_type alpha_orth = dot(n, xj, wi);
-        axpy(n, -alpha_orth, xj, wi);
-      }
-    }
-    
-    /* Orthogonalize W against P (if we have P) */
+    /* Orthogonalize W against P (like MATLAB: if ~isempty(P), W = W - P*(P'*W)) */
     if (has_P) {
-      for (int i = 0; i < k_active; ++i) {
-        real_type *wi = W + i * n;
-        for (int j = 0; j < k_active; ++j) {
-          real_type *pj = P + j * n;
-          real_type alpha_orth = dot(n, pj, wi);
-          axpy(n, -alpha_orth, pj, wi);
-        }
-      }
+      real_type one_orth = 1.0, zero_orth = 0.0, neg_one_orth = -1.0;
+#if (CUDA || HIP)
+      gemm("T", "N", k_active, k_active, n, &one_orth, P, n, W, n, &zero_orth, d_orth_coeff, k_active);
+      gemm("N", "N", n, k_active, k_active, &neg_one_orth, P, n, d_orth_coeff, k_active, &one_orth, W, n);
+#else
+      gemm("T", "N", k_active, k_active, n, &one_orth, P, n, W, n, &zero_orth, h_orth_coeff, k_active);
+      gemm("N", "N", n, k_active, k_active, &neg_one_orth, P, n, h_orth_coeff, k_active, &one_orth, W, n);
+#endif
     }
     
-    /* Drop tiny W directions */
-    compute_col_norms(n, k_active, W, h_res_norms);
+    
+    /* Drop tiny W directions (like MATLAB: idxW = vecnorm(W) > 1e-12; W = W(:, idxW)) */
     int kW = 0;
     for (int i = 0; i < k_active; ++i) {
-      if (h_res_norms[i] > LOBPCG_EPS) {
+      real_type w_nrm = nrm2(n, W + i * n);
+      if (w_nrm > 1e-12) {
         if (kW != i) {
           vec_copy(n, W + i * n, W + kW * n);
         }
@@ -558,12 +569,19 @@ void lobpcg(int n,
       }
     }
     
-    /* Drop tiny P directions */
+    /* Orthonormalize W for numerical stability in the eigenvalue solve */
+    /* (MATLAB's eig(AS,BS) handles non-orthonormal bases, but our solver needs conditioning) */
+    if (kW > 0) {
+      cgs2(n, kW, W);
+    }
+    
+    
+    /* Drop tiny P directions (like MATLAB: idxP = vecnorm(P) > 1e-12; P = P(:, idxP)) */
     int kP = 0;
     if (has_P) {
-      compute_col_norms(n, k_active, P, h_res_norms);
       for (int i = 0; i < k_active; ++i) {
-        if (h_res_norms[i] > LOBPCG_EPS) {
+        real_type p_nrm = nrm2(n, P + i * n);
+        if (p_nrm > 1e-12) {
           if (kP != i) {
             vec_copy(n, P + i * n, P + kP * n);
           }
@@ -576,7 +594,7 @@ void lobpcg(int n,
     /* Build trial subspace S = [X, W, P] */
     /* ------------------------------ */
     int kX = k_active;
-    int ssize = kX + kW + kP;  /* Total subspace size */
+    int ssize = kX + kW + kP;
     
     /* Copy X to S */
     for (int i = 0; i < kX; ++i) {
@@ -595,11 +613,8 @@ void lobpcg(int n,
     csr_matmat(n, ssize, nnz, ia, ja, a, S, AS_temp, 1.0, 0.0);
     
     /* ------------------------------ */
-    /* Compute small dense matrices for Rayleigh-Ritz */
-    /* AS_small = S' * (A*S), BS_small = S' * S */
+    /* Compute Rayleigh-Ritz matrices: G = S'*AS, B = S'*S */
     /* ------------------------------ */
-    /* These are ssize x ssize dense matrices in column-major order */
-    /* AS[i,j] = S[:,i]' * (A * S[:,j]) stored at h_AS[i + j * ssize] */
     for (int i = 0; i < ssize; ++i) {
       for (int j = 0; j < ssize; ++j) {
         h_AS[i + j * ssize] = dot(n, S + i * n, AS_temp + j * n);
@@ -607,19 +622,25 @@ void lobpcg(int n,
       }
     }
     
-    /* Symmetrize AS = (AS + AS') / 2 (column-major) */
+    /* Symmetrize G and B */
     for (int i = 0; i < ssize; ++i) {
       for (int j = i + 1; j < ssize; ++j) {
-        real_type avg = 0.5 * (h_AS[i + j * ssize] + h_AS[j + i * ssize]);
-        h_AS[i + j * ssize] = avg;
-        h_AS[j + i * ssize] = avg;
+        real_type avg_g = 0.5 * (h_AS[i + j * ssize] + h_AS[j + i * ssize]);
+        real_type avg_b = 0.5 * (h_BS[i + j * ssize] + h_BS[j + i * ssize]);
+        h_AS[i + j * ssize] = avg_g;
+        h_AS[j + i * ssize] = avg_g;
+        h_BS[i + j * ssize] = avg_b;
+        h_BS[j + i * ssize] = avg_b;
       }
     }
     
+    
+    
     /* ------------------------------ */
-    /* Solve generalized eigenvalue problem: AS * y = theta * BS * y */
+    /* Solve generalized eigenvalue problem: G*y = theta*B*y */
     /* ------------------------------ */
     dsygv(ssize, h_AS, h_BS, h_theta, h_Y);
+    
     
     /* Extract first k_active Ritz vectors */
     /* Y contains eigenvectors as columns, theta contains eigenvalues (sorted ascending) */
@@ -637,49 +658,80 @@ void lobpcg(int n,
     /* Xnew = X * Yx + W * Yw + P * Yp */
     /* Pnew = W * Yw + P * Yp */
     
-    /* Zero out Xnew and Pnew */
-    vec_zero(n * k_active, Xnew);
-    vec_zero(n * k_active, Pnew);
-    
-    for (int j = 0; j < k_active; ++j) {
-      /* Accumulate Xnew[:,j] = sum_i X[:,i] * Y[i,j] + sum_i W[:,i] * Y[kX+i,j] + ... */
-      /* h_Y is ssize x ssize in column-major: Y[i,j] = h_Y[i + j * ssize] */
+    /* Compute Xnew = S * Y[:, 0:k_active] using GEMM */
+    /* S is n x ssize on device, Y is ssize x ssize on host */
+    /* We need Y[:, 0:k_active] which is ssize x k_active */
+    {
+      real_type one_g = 1.0, zero_g = 0.0;
       
-      /* Contribution from X */
-      for (int i = 0; i < kX; ++i) {
-        real_type coeff = h_Y[i + j * ssize];  /* Y[i,j] in column-major */
-        axpy(n, coeff, X + i * n, Xnew + j * n);
+      /* Extract Y_small (ssize x k_active) for Xnew and Yw_Yp (ssize-kX x k_active) for Pnew */
+      real_type *h_Y_small = (real_type*) malloc(ssize * k_active * sizeof(real_type));
+      for (int j = 0; j < k_active; ++j) {
+        for (int i = 0; i < ssize; ++i) {
+          h_Y_small[i + j * ssize] = h_Y[i + j * ssize];
+        }
       }
       
-      /* Contribution from W */
-      for (int i = 0; i < kW; ++i) {
-        real_type coeff = h_Y[(kX + i) + j * ssize];
-        axpy(n, coeff, W + i * n, Xnew + j * n);
-        axpy(n, coeff, W + i * n, Pnew + j * n);
+#if (CUDA || HIP)
+      /* Copy Y_small to device */
+      real_type *d_Y_small;
+      d_Y_small = (real_type*) mallocForDevice(d_Y_small, ssize * k_active, sizeof(real_type));
+      memcpyDevice(d_Y_small, h_Y_small, ssize * k_active, sizeof(real_type), "H2D");
+      
+      /* Xnew = S * Y_small using device GEMM */
+      gemm("N", "N", n, k_active, ssize, &one_g, S, n, d_Y_small, ssize, &zero_g, Xnew, n);
+      
+      /* Pnew = [W, P] * Y[kX:ssize, 0:k_active] */
+      /* This is (W, P) * Y_small[kX:ssize, :] */
+      vec_zero(n * k_active, Pnew);
+      /* W contribution: W * Y[kX:kX+kW, :] */
+      if (kW > 0) {
+        real_type *d_Yw = d_Y_small + kX;  /* Offset to Yw block */
+        gemm("N", "N", n, k_active, kW, &one_g, W, n, d_Yw, ssize, &zero_g, Pnew, n);
+      }
+      /* P contribution: P * Y[kX+kW:ssize, :] */
+      if (kP > 0) {
+        real_type *d_Yp = d_Y_small + (kX + kW);  /* Offset to Yp block */
+        gemm("N", "N", n, k_active, kP, &one_g, P, n, d_Yp, ssize, &one_g, Pnew, n);
       }
       
-      /* Contribution from P */
-      for (int i = 0; i < kP; ++i) {
-        real_type coeff = h_Y[(kX + kW + i) + j * ssize];
-        axpy(n, coeff, P + i * n, Xnew + j * n);
-        axpy(n, coeff, P + i * n, Pnew + j * n);
+      freeDevice(d_Y_small);
+#else
+      /* CPU version: Xnew = S * Y_small */
+      gemm("N", "N", n, k_active, ssize, &one_g, S, n, h_Y_small, ssize, &zero_g, Xnew, n);
+      
+      /* Pnew = [W, P] * Y[kX:ssize, :] */
+      vec_zero(n * k_active, Pnew);
+      if (kW > 0) {
+        real_type *h_Yw = h_Y_small + kX;
+        gemm("N", "N", n, k_active, kW, &one_g, W, n, h_Yw, ssize, &zero_g, Pnew, n);
       }
+      if (kP > 0) {
+        real_type *h_Yp = h_Y_small + (kX + kW);
+        gemm("N", "N", n, k_active, kP, &one_g, P, n, h_Yp, ssize, &one_g, Pnew, n);
+      }
+#endif
+      
+      free(h_Y_small);
     }
     
-    /* Orthonormalize Xnew */
+    /* Stabilize Xnew with full orthonormalization (like MATLAB line 129: [Xnew, ~] = cgs2(Xnew)) */
     cgs2(n, k_active, Xnew);
     
-    /* Stabilize Pnew: orthogonalize against Xnew */
-    for (int i = 0; i < k_active; ++i) {
-      real_type *pnew_i = Pnew + i * n;
-      for (int j = 0; j < k_active; ++j) {
-        real_type *xnew_j = Xnew + j * n;
-        real_type alpha_orth = dot(n, xnew_j, pnew_i);
-        axpy(n, -alpha_orth, xnew_j, pnew_i);
-      }
+    /* Stabilize Pnew: orthogonalize against Xnew using block GEMM */
+    /* Pnew = Pnew - Xnew * (Xnew' * Pnew) */
+    {
+      real_type one_stab = 1.0, zero_stab = 0.0, neg_one_stab = -1.0;
+#if (CUDA || HIP)
+      gemm("T", "N", k_active, k_active, n, &one_stab, Xnew, n, Pnew, n, &zero_stab, d_orth_coeff, k_active);
+      gemm("N", "N", n, k_active, k_active, &neg_one_stab, Xnew, n, d_orth_coeff, k_active, &one_stab, Pnew, n);
+#else
+      gemm("T", "N", k_active, k_active, n, &one_stab, Xnew, n, Pnew, n, &zero_stab, h_orth_coeff, k_active);
+      gemm("N", "N", n, k_active, k_active, &neg_one_stab, Xnew, n, h_orth_coeff, k_active, &one_stab, Pnew, n);
+#endif
     }
     
-    /* Orthonormalize Pnew */
+    /* Orthonormalize Pnew (MATLAB line 140: [Pnew, Rp] = cgs2(Pnew)) */
     cgs2(n, k_active, Pnew);
     
     /* ------------------------------ */
@@ -778,4 +830,8 @@ void lobpcg(int n,
   free(h_res_norms);
   free(h_lambda);
   free(locked);
+  free(h_orth_coeff);
+#if (CUDA || HIP)
+  freeDevice(d_orth_coeff);
+#endif
 }
