@@ -113,4 +113,38 @@ void hip_ichol(const int *ia,
                real_type *x,
                real_type *y);
 
+/* GEMM: C = alpha * op(A) * op(B) + beta * C */
+void hip_gemm(const char *transA,
+              const char *transB,
+              const int m,
+              const int n,
+              const int k,
+              const real_type *alpha,
+              const real_type *A,
+              const int lda,
+              const real_type *B,
+              const int ldb,
+              const real_type *beta,
+              real_type *C,
+              const int ldc);
+
+/* Generalized symmetric eigenvalue problem: A*x = lambda*B*x */
+/* NOTE: For small dense matrices, we copy to host and use LAPACK/rocSOLVER */
+void hip_dsygv(const int n,
+               real_type *A,
+               real_type *B,
+               real_type *w,
+               real_type *eigvecs);
+
+/* Standard symmetric eigenvalue problem: A*x = lambda*x */
+void hip_dsyev(const int n,
+               real_type *A,
+               real_type *w,
+               real_type *eigvecs);
+
+/* Vector 2-norm */
+real_type hip_nrm2(const int n, const real_type *v);
+
+/* Set vector elements to value - already declared as hip_vec_set */
+
 #endif

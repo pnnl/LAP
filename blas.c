@@ -147,11 +147,11 @@ void gemv(const char *T,
           double *y) {
 
 #if NOACC
-  simple_gemv(T, m, n, alpha, A, lda, x, beta);
+  simple_gemv(T, m, n, alpha, A, lda, x, beta, y);
 #elif CUDA
-  cuda_gemv(T, m, n, alpha, A, lda, x, beta);
+  cuda_gemv(T, m, n, alpha, A, lda, x, beta, y);
 #elif OPENMP
-  openmp_gemv(T, m, n, alpha, A, lda, x, beta);
+  openmp_gemv(T, m, n, alpha, A, lda, x, beta, y);
 #elif HIP
   hip_gemv(T, m, n, alpha, A, lda, x, beta, y);
 #endif
@@ -228,5 +228,84 @@ void vec_zero(const int n,
   openmp_vec_zero(n, vec);
 #elif HIP
   hip_vec_zero(n, vec);
+#endif
+}
+
+void gemm(const char *transA,
+          const char *transB,
+          const int m,
+          const int n,
+          const int k,
+          const real_type *alpha,
+          const real_type *A,
+          const int lda,
+          const real_type *B,
+          const int ldb,
+          const real_type *beta,
+          real_type *C,
+          const int ldc) {
+#if NOACC
+  simple_gemm(transA, transB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#elif CUDA
+  cuda_gemm(transA, transB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#elif OPENMP
+  openmp_gemm(transA, transB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#elif HIP
+  hip_gemm(transA, transB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#endif
+}
+
+void dsygv(const int n,
+           real_type *A,
+           real_type *B,
+           real_type *w,
+           real_type *eigvecs) {
+#if NOACC
+  simple_dsygv(n, A, B, w, eigvecs);
+#elif CUDA
+  cuda_dsygv(n, A, B, w, eigvecs);
+#elif OPENMP
+  openmp_dsygv(n, A, B, w, eigvecs);
+#elif HIP
+  hip_dsygv(n, A, B, w, eigvecs);
+#endif
+}
+
+void dsyev(const int n,
+           real_type *A,
+           real_type *w,
+           real_type *eigvecs) {
+#if NOACC
+  simple_dsyev(n, A, w, eigvecs);
+#elif CUDA
+  cuda_dsyev(n, A, w, eigvecs);
+#elif OPENMP
+  openmp_dsyev(n, A, w, eigvecs);
+#elif HIP
+  hip_dsyev(n, A, w, eigvecs);
+#endif
+}
+
+real_type nrm2(const int n, const real_type *v) {
+#if NOACC
+  return simple_nrm2(n, v);
+#elif CUDA
+  return cuda_nrm2(n, v);
+#elif OPENMP
+  return openmp_nrm2(n, v);
+#elif HIP
+  return hip_nrm2(n, v);
+#endif
+}
+
+void vec_set(const int n, real_type value, real_type *vec) {
+#if NOACC
+  simple_vec_set(n, value, vec);
+#elif CUDA
+  cuda_vec_set(n, value, vec);
+#elif OPENMP
+  openmp_vec_set(n, value, vec);
+#elif HIP
+  hip_vec_set(n, value, vec);
 #endif
 }

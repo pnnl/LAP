@@ -135,6 +135,42 @@ void simple_vec_zero(const int n, real_type *vec){
   }
 }
 
+void simple_gemv(const char *T,
+                 const int m,
+                 const int n,
+                 const double *alpha,
+                 const double *A,
+                 const int lda,
+                 const double *x,
+                 const double *beta,
+                 double *y)
+{
+  /* y = alpha * A * x + beta * y (or A^T if T == "T") */
+  double a = *alpha;
+  double b = *beta;
+  
+  if (T[0] == 'T' || T[0] == 't') {
+    /* Transpose case: y = alpha * A^T * x + beta * y */
+    /* A is m x n, A^T is n x m, x is m-vector, y is n-vector */
+    for (int j = 0; j < n; ++j) {
+      double sum = 0.0;
+      for (int i = 0; i < m; ++i) {
+        sum += A[i + j * lda] * x[i];
+      }
+      y[j] = a * sum + b * y[j];
+    }
+  } else {
+    /* Non-transpose case: y = alpha * A * x + beta * y */
+    /* A is m x n, x is n-vector, y is m-vector */
+    for (int i = 0; i < m; ++i) {
+      double sum = 0.0;
+      for (int j = 0; j < n; ++j) {
+        sum += A[i + j * lda] * x[j];
+      }
+      y[i] = a * sum + b * y[i];
+    }
+  }
+}
 
 void initialize_ichol(const int n, 
                       const int nnzA, 
@@ -220,4 +256,271 @@ void simple_ichol(const int *ia,
     y[i] /= ua[uia[i]]; /*divide by the diagonal entry*/
   }
 
+}
+
+/* GEMM: C = alpha * op(A) * op(B) + beta * C */
+/* A is m x k (or k x m if transposed), B is k x n (or n x k if transposed), C is m x n */
+/* All matrices in column-major order */
+void simple_gemm(const char *transA,
+                 const char *transB,
+                 const int m,
+                 const int n,
+                 const int k,
+                 const real_type *alpha,
+                 const real_type *A,
+                 const int lda,
+                 const real_type *B,
+                 const int ldb,
+                 const real_type *beta,
+                 real_type *C,
+                 const int ldc) {
+  real_type a = *alpha;
+  real_type b = *beta;
+  int ta = (transA[0] == 'T' || transA[0] == 't') ? 1 : 0;
+  int tb = (transB[0] == 'T' || transB[0] == 't') ? 1 : 0;
+  
+  for (int j = 0; j < n; ++j) {
+    for (int i = 0; i < m; ++i) {
+      real_type sum = 0.0;
+      for (int l = 0; l < k; ++l) {
+        real_type aval = ta ? A[l + i * lda] : A[i + l * lda];
+        real_type bval = tb ? B[j + l * ldb] : B[l + j * ldb];
+        sum += aval * bval;
+      }
+      C[i + j * ldc] = a * sum + b * C[i + j * ldc];
+    }
+  }
+}
+
+/* 
+ * Simple Cholesky decomposition for positive definite matrix
+ * A is n x n symmetric positive definite, stored in column-major
+ * On exit, lower triangular part of A contains L such that A = L*L'
+ */
+static int simple_cholesky(int n, real_type *A) {
+  for (int j = 0; j < n; ++j) {
+    real_type sum = A[j + j * n];
+    for (int k = 0; k < j; ++k) {
+      sum -= A[j + k * n] * A[j + k * n];
+    }
+    if (sum <= 0.0) {
+      return -1;  /* Not positive definite */
+    }
+    A[j + j * n] = sqrt(sum);
+    
+    for (int i = j + 1; i < n; ++i) {
+      sum = A[i + j * n];
+      for (int k = 0; k < j; ++k) {
+        sum -= A[i + k * n] * A[j + k * n];
+      }
+      A[i + j * n] = sum / A[j + j * n];
+    }
+  }
+  return 0;
+}
+
+/* 
+ * Simple Jacobi eigenvalue algorithm for symmetric matrices
+ * A is n x n symmetric, stored in column-major
+ * On exit: w contains eigenvalues (unsorted), V contains eigenvectors
+ */
+static void simple_jacobi_eigen(int n, real_type *A, real_type *w, real_type *V) {
+  int max_iter = 100 * n * n;
+  real_type eps = 1e-14;
+  
+  /* Initialize V to identity */
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      V[i + j * n] = (i == j) ? 1.0 : 0.0;
+    }
+  }
+  
+  /* Work on copy of A */
+  real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
+  for (int i = 0; i < n * n; ++i) {
+    Acopy[i] = A[i];
+  }
+  
+  for (int iter = 0; iter < max_iter; ++iter) {
+    /* Find largest off-diagonal element */
+    int p = 0, q = 1;
+    real_type max_val = 0.0;
+    for (int i = 0; i < n; ++i) {
+      for (int j = i + 1; j < n; ++j) {
+        real_type absval = fabs(Acopy[i + j * n]);
+        if (absval > max_val) {
+          max_val = absval;
+          p = i;
+          q = j;
+        }
+      }
+    }
+    
+    if (max_val < eps) break;
+    
+    /* Compute Jacobi rotation */
+    real_type app = Acopy[p + p * n];
+    real_type aqq = Acopy[q + q * n];
+    real_type apq = Acopy[p + q * n];
+    
+    real_type theta = 0.5 * atan2(2.0 * apq, aqq - app);
+    real_type c = cos(theta);
+    real_type s = sin(theta);
+    
+    /* Apply rotation to Acopy */
+    for (int i = 0; i < n; ++i) {
+      if (i != p && i != q) {
+        real_type aip = Acopy[i + p * n];
+        real_type aiq = Acopy[i + q * n];
+        Acopy[i + p * n] = c * aip - s * aiq;
+        Acopy[p + i * n] = Acopy[i + p * n];
+        Acopy[i + q * n] = s * aip + c * aiq;
+        Acopy[q + i * n] = Acopy[i + q * n];
+      }
+    }
+    Acopy[p + p * n] = c * c * app - 2.0 * s * c * apq + s * s * aqq;
+    Acopy[q + q * n] = s * s * app + 2.0 * s * c * apq + c * c * aqq;
+    Acopy[p + q * n] = 0.0;
+    Acopy[q + p * n] = 0.0;
+    
+    /* Apply rotation to V */
+    for (int i = 0; i < n; ++i) {
+      real_type vip = V[i + p * n];
+      real_type viq = V[i + q * n];
+      V[i + p * n] = c * vip - s * viq;
+      V[i + q * n] = s * vip + c * viq;
+    }
+  }
+  
+  /* Extract eigenvalues */
+  for (int i = 0; i < n; ++i) {
+    w[i] = Acopy[i + i * n];
+  }
+  
+  /* Sort eigenvalues and eigenvectors in ascending order */
+  for (int i = 0; i < n - 1; ++i) {
+    int min_idx = i;
+    for (int j = i + 1; j < n; ++j) {
+      if (w[j] < w[min_idx]) min_idx = j;
+    }
+    if (min_idx != i) {
+      /* Swap eigenvalues */
+      real_type tmp = w[i];
+      w[i] = w[min_idx];
+      w[min_idx] = tmp;
+      /* Swap eigenvector columns */
+      for (int k = 0; k < n; ++k) {
+        tmp = V[k + i * n];
+        V[k + i * n] = V[k + min_idx * n];
+        V[k + min_idx * n] = tmp;
+      }
+    }
+  }
+  
+  free(Acopy);
+}
+
+/* Standard symmetric eigenvalue problem: A*x = lambda*x */
+void simple_dsyev(const int n,
+                  real_type *A,
+                  real_type *w,
+                  real_type *eigvecs) {
+  simple_jacobi_eigen(n, A, w, eigvecs);
+}
+
+/* Generalized symmetric eigenvalue problem: A*x = lambda*B*x */
+/* Uses Cholesky factorization: B = L*L', then solve L^{-1}*A*L^{-T}*y = lambda*y */
+/* where x = L^{-T}*y */
+void simple_dsygv(const int n,
+                  real_type *A,
+                  real_type *B,
+                  real_type *w,
+                  real_type *eigvecs) {
+  
+  /* Make copies since we'll modify */
+  real_type *Bcopy = (real_type*) malloc(n * n * sizeof(real_type));
+  real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
+  real_type *C = (real_type*) malloc(n * n * sizeof(real_type));
+  
+  for (int i = 0; i < n * n; ++i) {
+    Bcopy[i] = B[i];
+    Acopy[i] = A[i];
+  }
+  
+  /* Cholesky: B = L*L' */
+  int ret = simple_cholesky(n, Bcopy);
+  if (ret != 0) {
+    fprintf(stderr, "Warning: Cholesky failed, B not positive definite. Using regularization.\n");
+    /* Add small regularization */
+    for (int i = 0; i < n; ++i) {
+      Bcopy[i + i * n] = B[i + i * n] + 1e-10;
+    }
+    simple_cholesky(n, Bcopy);
+  }
+  
+  /* L is now in lower triangle of Bcopy */
+  /* Compute C = L^{-1} * A */
+  for (int j = 0; j < n; ++j) {
+    for (int i = 0; i < n; ++i) {
+      real_type sum = Acopy[i + j * n];
+      for (int k = 0; k < i; ++k) {
+        sum -= Bcopy[i + k * n] * C[k + j * n];
+      }
+      C[i + j * n] = sum / Bcopy[i + i * n];
+    }
+  }
+  
+  /* Compute Acopy = C * L^{-T} = L^{-1} * A * L^{-T} */
+  for (int j = 0; j < n; ++j) {
+    for (int i = n - 1; i >= 0; --i) {
+      real_type sum = C[j + i * n];
+      for (int k = i + 1; k < n; ++k) {
+        sum -= Bcopy[k + i * n] * Acopy[j + k * n];
+      }
+      Acopy[j + i * n] = sum / Bcopy[i + i * n];
+    }
+  }
+  
+  /* Symmetrize */
+  for (int i = 0; i < n; ++i) {
+    for (int j = i + 1; j < n; ++j) {
+      real_type avg = 0.5 * (Acopy[i + j * n] + Acopy[j + i * n]);
+      Acopy[i + j * n] = avg;
+      Acopy[j + i * n] = avg;
+    }
+  }
+  
+  /* Solve standard eigenvalue problem */
+  simple_jacobi_eigen(n, Acopy, w, eigvecs);
+  
+  /* Back-transform eigenvectors: x = L^{-T} * y */
+  for (int k = 0; k < n; ++k) {
+    for (int i = n - 1; i >= 0; --i) {
+      real_type sum = eigvecs[i + k * n];
+      for (int j = i + 1; j < n; ++j) {
+        sum -= Bcopy[j + i * n] * eigvecs[j + k * n];
+      }
+      eigvecs[i + k * n] = sum / Bcopy[i + i * n];
+    }
+  }
+  
+  free(Bcopy);
+  free(Acopy);
+  free(C);
+}
+
+/* Vector 2-norm */
+real_type simple_nrm2(const int n, const real_type *v) {
+  real_type sum = 0.0;
+  for (int i = 0; i < n; ++i) {
+    sum += v[i] * v[i];
+  }
+  return sqrt(sum);
+}
+
+/* Set vector elements to value */
+void simple_vec_set(const int n, real_type value, real_type *vec) {
+  for (int i = 0; i < n; ++i) {
+    vec[i] = value;
+  }
 }

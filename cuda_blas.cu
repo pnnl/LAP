@@ -692,6 +692,54 @@ void cuda_axpy (const int n, const real_type alpha, const real_type *x, real_typ
 #endif
 }
 
+void cuda_gemv(const char *T,
+               const int m,
+               const int n,
+               const double *alpha,
+               const double *A,
+               const int lda,
+               const double *x,
+               const double *beta,
+               double *y)
+{
+  cublasOperation_t op;
+  if (T[0] == 'T' || T[0] == 't') {
+    op = CUBLAS_OP_T;
+  } else {
+    op = CUBLAS_OP_N;
+  }
+
+#if USE_FP64
+  CUBLAS_CHECK(cublasDgemv(handle_cublas,
+                           op,
+                           m,
+                           n,
+                           alpha,
+                           A,
+                           lda,
+                           x,
+                           1,
+                           beta,
+                           y,
+                           1));
+#else
+  float alpha_f = (float)(*alpha);
+  float beta_f = (float)(*beta);
+  CUBLAS_CHECK(cublasSgemv(handle_cublas,
+                           op,
+                           m,
+                           n,
+                           &alpha_f,
+                           (const float*)A,
+                           lda,
+                           (const float*)x,
+                           1,
+                           &beta_f,
+                           (float*)y,
+                           1));
+#endif
+}
+
 void cuda_csr_matvec(const int n, const int nnz, const int *ia, const int *ja, const real_type *a, const real_type *x, real_type *result, const real_type*al, const real_type *bet){
   /* y = alpha *A* x + beta * y */ 
 
@@ -861,5 +909,286 @@ void cuda_vec_copy(const int n, const real_type *src, real_type *dest){
 void cuda_vec_zero(const int n, real_type *vec){
 
   cuda_vec_zero_kernel<<<1024, 1024>>>(n, vec);
+}
+
+__global__ void cuda_vec_set_kernel(const int n, real_type value, real_type *vec) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < n) {
+    vec[idx] = value;
+    idx += blockDim.x * gridDim.x;
+  }
+}
+
+void cuda_vec_set(const int n, real_type value, real_type *vec) {
+  cuda_vec_set_kernel<<<1024, 1024>>>(n, value, vec);
+  CUDA_CHECK(cudaDeviceSynchronize());
+}
+
+void cuda_gemm(const char *transA,
+               const char *transB,
+               const int m,
+               const int n,
+               const int k,
+               const real_type *alpha,
+               const real_type *A,
+               const int lda,
+               const real_type *B,
+               const int ldb,
+               const real_type *beta,
+               real_type *C,
+               const int ldc) {
+  cublasOperation_t opA = (transA[0] == 'T' || transA[0] == 't') 
+                           ? CUBLAS_OP_T : CUBLAS_OP_N;
+  cublasOperation_t opB = (transB[0] == 'T' || transB[0] == 't') 
+                           ? CUBLAS_OP_T : CUBLAS_OP_N;
+  
+#if USE_FP64
+  CUBLAS_CHECK(cublasDgemm(handle_cublas,
+                           opA,
+                           opB,
+                           m,
+                           n,
+                           k,
+                           alpha,
+                           A,
+                           lda,
+                           B,
+                           ldb,
+                           beta,
+                           C,
+                           ldc));
+#else
+  float alpha_f = (float)(*alpha);
+  float beta_f = (float)(*beta);
+  CUBLAS_CHECK(cublasSgemm(handle_cublas,
+                           opA,
+                           opB,
+                           m,
+                           n,
+                           k,
+                           &alpha_f,
+                           (const float*)A,
+                           lda,
+                           (const float*)B,
+                           ldb,
+                           &beta_f,
+                           (float*)C,
+                           ldc));
+#endif
+  CUDA_CHECK(cudaDeviceSynchronize());
+}
+
+real_type cuda_nrm2(const int n, const real_type *v) {
+  real_type result;
+#if USE_FP64
+  CUBLAS_CHECK(cublasDnrm2(handle_cublas, n, v, 1, &result));
+#else
+  float result_f;
+  CUBLAS_CHECK(cublasSnrm2(handle_cublas, n, (const float*)v, 1, &result_f));
+  result = (real_type)result_f;
+#endif
+  return result;
+}
+
+/* 
+ * Simple Jacobi eigenvalue algorithm for symmetric matrices (host version)
+ * Used for small dense matrices in LOBPCG Rayleigh-Ritz step
+ */
+static void cuda_jacobi_eigen_host(int n, real_type *A, real_type *w, real_type *V) {
+  int max_iter = 100 * n * n;
+  real_type eps = 1e-14;
+  
+  /* Initialize V to identity */
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      V[i + j * n] = (i == j) ? 1.0 : 0.0;
+    }
+  }
+  
+  /* Work on copy of A */
+  real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
+  for (int i = 0; i < n * n; ++i) {
+    Acopy[i] = A[i];
+  }
+  
+  for (int iter = 0; iter < max_iter; ++iter) {
+    /* Find largest off-diagonal element */
+    int p = 0, q = 1;
+    real_type max_val = 0.0;
+    for (int i = 0; i < n; ++i) {
+      for (int j = i + 1; j < n; ++j) {
+        real_type absval = fabs(Acopy[i + j * n]);
+        if (absval > max_val) {
+          max_val = absval;
+          p = i;
+          q = j;
+        }
+      }
+    }
+    
+    if (max_val < eps) break;
+    
+    /* Compute Jacobi rotation */
+    real_type app = Acopy[p + p * n];
+    real_type aqq = Acopy[q + q * n];
+    real_type apq = Acopy[p + q * n];
+    
+    real_type theta = 0.5 * atan2(2.0 * apq, aqq - app);
+    real_type c = cos(theta);
+    real_type s = sin(theta);
+    
+    /* Apply rotation to Acopy */
+    for (int i = 0; i < n; ++i) {
+      if (i != p && i != q) {
+        real_type aip = Acopy[i + p * n];
+        real_type aiq = Acopy[i + q * n];
+        Acopy[i + p * n] = c * aip - s * aiq;
+        Acopy[p + i * n] = Acopy[i + p * n];
+        Acopy[i + q * n] = s * aip + c * aiq;
+        Acopy[q + i * n] = Acopy[i + q * n];
+      }
+    }
+    Acopy[p + p * n] = c * c * app - 2.0 * s * c * apq + s * s * aqq;
+    Acopy[q + q * n] = s * s * app + 2.0 * s * c * apq + c * c * aqq;
+    Acopy[p + q * n] = 0.0;
+    Acopy[q + p * n] = 0.0;
+    
+    /* Apply rotation to V */
+    for (int i = 0; i < n; ++i) {
+      real_type vip = V[i + p * n];
+      real_type viq = V[i + q * n];
+      V[i + p * n] = c * vip - s * viq;
+      V[i + q * n] = s * vip + c * viq;
+    }
+  }
+  
+  /* Extract eigenvalues */
+  for (int i = 0; i < n; ++i) {
+    w[i] = Acopy[i + i * n];
+  }
+  
+  /* Sort eigenvalues and eigenvectors in ascending order */
+  for (int i = 0; i < n - 1; ++i) {
+    int min_idx = i;
+    for (int j = i + 1; j < n; ++j) {
+      if (w[j] < w[min_idx]) min_idx = j;
+    }
+    if (min_idx != i) {
+      real_type tmp = w[i];
+      w[i] = w[min_idx];
+      w[min_idx] = tmp;
+      for (int k = 0; k < n; ++k) {
+        tmp = V[k + i * n];
+        V[k + i * n] = V[k + min_idx * n];
+        V[k + min_idx * n] = tmp;
+      }
+    }
+  }
+  
+  free(Acopy);
+}
+
+static int cuda_cholesky_host(int n, real_type *A) {
+  for (int j = 0; j < n; ++j) {
+    real_type sum = A[j + j * n];
+    for (int k = 0; k < j; ++k) {
+      sum -= A[j + k * n] * A[j + k * n];
+    }
+    if (sum <= 0.0) return -1;
+    A[j + j * n] = sqrt(sum);
+    
+    for (int i = j + 1; i < n; ++i) {
+      sum = A[i + j * n];
+      for (int k = 0; k < j; ++k) {
+        sum -= A[i + k * n] * A[j + k * n];
+      }
+      A[i + j * n] = sum / A[j + j * n];
+    }
+  }
+  return 0;
+}
+
+/* Standard symmetric eigenvalue problem - host side for small dense matrices */
+void cuda_dsyev(const int n,
+                real_type *A,
+                real_type *w,
+                real_type *eigvecs) {
+  cuda_jacobi_eigen_host(n, A, w, eigvecs);
+}
+
+/* Generalized symmetric eigenvalue problem: A*x = lambda*B*x */
+void cuda_dsygv(const int n,
+                real_type *A,
+                real_type *B,
+                real_type *w,
+                real_type *eigvecs) {
+  
+  real_type *Bcopy = (real_type*) malloc(n * n * sizeof(real_type));
+  real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
+  real_type *C = (real_type*) malloc(n * n * sizeof(real_type));
+  
+  for (int i = 0; i < n * n; ++i) {
+    Bcopy[i] = B[i];
+    Acopy[i] = A[i];
+  }
+  
+  /* Cholesky: B = L*L' */
+  int ret = cuda_cholesky_host(n, Bcopy);
+  if (ret != 0) {
+    fprintf(stderr, "Warning: Cholesky failed in cuda_dsygv. Using regularization.\n");
+    for (int i = 0; i < n; ++i) {
+      Bcopy[i + i * n] = B[i + i * n] + 1e-10;
+    }
+    cuda_cholesky_host(n, Bcopy);
+  }
+  
+  /* Compute C = L^{-1} * A */
+  for (int j = 0; j < n; ++j) {
+    for (int i = 0; i < n; ++i) {
+      real_type sum = Acopy[i + j * n];
+      for (int k = 0; k < i; ++k) {
+        sum -= Bcopy[i + k * n] * C[k + j * n];
+      }
+      C[i + j * n] = sum / Bcopy[i + i * n];
+    }
+  }
+  
+  /* Compute Acopy = C * L^{-T} */
+  for (int j = 0; j < n; ++j) {
+    for (int i = n - 1; i >= 0; --i) {
+      real_type sum = C[j + i * n];
+      for (int k = i + 1; k < n; ++k) {
+        sum -= Bcopy[k + i * n] * Acopy[j + k * n];
+      }
+      Acopy[j + i * n] = sum / Bcopy[i + i * n];
+    }
+  }
+  
+  /* Symmetrize */
+  for (int i = 0; i < n; ++i) {
+    for (int j = i + 1; j < n; ++j) {
+      real_type avg = 0.5 * (Acopy[i + j * n] + Acopy[j + i * n]);
+      Acopy[i + j * n] = avg;
+      Acopy[j + i * n] = avg;
+    }
+  }
+  
+  /* Solve standard eigenvalue problem */
+  cuda_jacobi_eigen_host(n, Acopy, w, eigvecs);
+  
+  /* Back-transform eigenvectors: x = L^{-T} * y */
+  for (int k = 0; k < n; ++k) {
+    for (int i = n - 1; i >= 0; --i) {
+      real_type sum = eigvecs[i + k * n];
+      for (int j = i + 1; j < n; ++j) {
+        sum -= Bcopy[j + i * n] * eigvecs[j + k * n];
+      }
+      eigvecs[i + k * n] = sum / Bcopy[i + i * n];
+    }
+  }
+  
+  free(Bcopy);
+  free(Acopy);
+  free(C);
 }
 
