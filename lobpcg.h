@@ -64,6 +64,25 @@ void lobpcg(int n,
 /* CGS2 orthonormalization: orthonormalize columns of V in-place */
 void cgs2(int n, int k, real_type *V);
 
+/* CGS2 workspace structure for memory reuse */
+typedef struct {
+  int n_max;          /* Maximum n dimension */
+  int k_max;          /* Maximum k dimension */
+  real_type *a1;      /* Buffer for projection coefficients (k_max) - host for GPU, main for CPU */
+  real_type *a2;      /* Buffer for projection coefficients (k_max) - host for GPU, main for CPU */
+  real_type *d_a1;    /* Device buffer for projection coefficients (k_max) - GPU only, NULL for CPU */
+  real_type *d_a2;    /* Device buffer for projection coefficients (k_max) - GPU only, NULL for CPU */
+} cgs2_workspace;
+
+/* Allocate CGS2 workspace for given maximum dimensions */
+cgs2_workspace* cgs2_workspace_alloc(int n_max, int k_max);
+
+/* Free CGS2 workspace */
+void cgs2_workspace_free(cgs2_workspace *ws);
+
+/* CGS2 with pre-allocated workspace (for efficiency in loops) */
+void cgs2_with_workspace(int n, int k, real_type *V, cgs2_workspace *ws);
+
 /* Compute column norms of a matrix */
 void compute_col_norms(int n, int k, const real_type *V, real_type *norms);
 

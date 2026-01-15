@@ -18,7 +18,7 @@ for idx in {1..2}; do
 
   mtxs=`dirname $mtx`
   dir_name="/home/kswirydo/LAP_PNNL/REP_${idx}_MI250_CG/${mtxs}/power_results/"
-  fig_name="${mtxs}_REP${idx}_MI250"
+  fig_name="${mtxs}_REP${idx}_MI250.png"
   fig_title='"AMD MI250: '${mtxs}'"'
   command="python3  /home/kswirydo/power_analysis/plot_power_profile_multi.py --folder ${dir_name} --figure $fig_name  --title ${fig_title}"
   echo $command

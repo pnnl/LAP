@@ -9,8 +9,8 @@ RES_HOME="./power_results"
 PRECOND=('GS_std' 'GS_it' 'GS_it2' 'it_jacobi' 'line_jacobi' 'ichol')
 MATRIX=('delaunay_n24/delaunay_n24.mtx' 't60k/t60k.mtx' 'hugebubbles-00000/hugebubbles-00000.mtx' 'adaptive/adaptive.mtx' 'road_central/road_central.mtx' 'road_usa/road_usa.mtx' 'italy_osm/italy_osm.mtx')
 declare -a time_res
-mkdir -p plots_cg
-cd plots_cg
+mkdir -p plots_laplacian
+cd plots_laplacian
 for idx in {1..2}; do
   
   echo "Matrix,Preconditioner,Execution Time (in seconds)" >> /home/kswirydo/LAP_PNNL/LAPLACIAN_runtimes/runtime_MI300X_REP_${idx}.csv
@@ -18,7 +18,7 @@ for idx in {1..2}; do
 
   mtxs=`dirname $mtx`
   dir_name="/home/kswirydo/LAP_PNNL/REP_${idx}_MI300x_LAPLACIAN/${mtxs}/power_results/"
-  fig_name="${mtxs}_REP${idx}_MI300X"
+  fig_name="${mtxs}_MI300X_REP${idx}.png"
   fig_title='"AMD MI300X: '${mtxs}'"'
   command="python3  /home/kswirydo/power_analysis/plot_power_profile_multi.py --folder ${dir_name} --figure $fig_name  --title ${fig_title}"
   echo $command
@@ -91,11 +91,11 @@ for idx in {1..2}; do
    echo $mtxs ',iterative Jacobi,' ${time_res[4]} >> /home/kswirydo/LAP_PNNL/LAPLACIAN_runtimes/runtime_MI300X_REP_${idx}.csv
    echo $mtxs ',Incomple Cholesky,' ${time_res[5]} >> /home/kswirydo/LAP_PNNL/LAPLACIAN_runtimes/runtime_MI300X_REP_${idx}.csv
 done
-rm /home/kswirydo/LAP_PNNL/LAPLACIAN_energy/aaa_REP${idx}.csv
-echo "Matrix,Preconditioner,Energy" >> /home/kswirydo/LAP_PNNL/LAPLACIAN_energy/aaa_REP${idx}.csv
-cd /home/kswirydo/LAP_PNNL/LAPLACIAN_energy
+rm /home/kswirydo/LAP_PNNL/plots_laplacian/aaa_REP${idx}.csv
+echo "Matrix,Preconditioner,Energy" >> /home/kswirydo/LAP_PNNL/plots_laplacian//aaa_REP${idx}.csv
+cd /home/kswirydo/LAP_PNNL/plots_laplacian/
 rm energy_MI300X_REP_${idx}.csv
 #cat *_REP${idx}.csv 
-cat *_REP${idx}.csv >> energy_MI300X_REP_${idx}.csv
+cat *_MI300X_REP${idx}.csv >> energy_MI300X_REP_${idx}.csv
 cd /home/kswirydo/LAP_PNNL/plots_cg/
 done

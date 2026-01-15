@@ -4,7 +4,7 @@
 #SBATCH --gpus-per-node 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --exclusive
-#SBATCH --output=mi300X_Laplacian.txt
+#SBATCH --output=mi300X_Laplacian_rerun.txt
 #SBATCH --nodelist=TheraC17
 module load rocm gcc python
 
@@ -21,8 +21,8 @@ RHS=('' '' '' '' '' '' '' '')
 
 declare -A ARGX
 # delaunay
-#ARGX+=(["${MATRIX[0]}_${PRECOND[0]}"]='6 3')
-ARGX+=(["${MATRIX[0]}_${PRECOND[0]}"]='-1')
+ARGX+=(["${MATRIX[0]}_${PRECOND[0]}"]='6 3')
+#ARGX+=(["${MATRIX[0]}_${PRECOND[0]}"]='-1')
 ARGX+=(["${MATRIX[0]}_${PRECOND[1]}"]='15 1')
 ARGX+=(["${MATRIX[0]}_${PRECOND[2]}"]='6 3')
 ARGX+=(["${MATRIX[0]}_${PRECOND[3]}"]='1 1')
@@ -36,16 +36,16 @@ ARGX+=(["${MATRIX[1]}_${PRECOND[3]}"]='1 1')
 ARGX+=(["${MATRIX[1]}_${PRECOND[4]}"]='1 1')
 ARGX+=(["${MATRIX[1]}_${PRECOND[5]}"]='-1')
 #hugebubbles
-#ARGX+=(["${MATRIX[2]}_${PRECOND[0]}"]='6 3')
-ARGX+=(["${MATRIX[2]}_${PRECOND[0]}"]='-1')
+ARGX+=(["${MATRIX[2]}_${PRECOND[0]}"]='6 3')
+#ARGX+=(["${MATRIX[2]}_${PRECOND[0]}"]='-1')
 ARGX+=(["${MATRIX[2]}_${PRECOND[1]}"]='50 1')
 ARGX+=(["${MATRIX[2]}_${PRECOND[2]}"]='6 3')
 ARGX+=(["${MATRIX[2]}_${PRECOND[3]}"]='-1')
 ARGX+=(["${MATRIX[2]}_${PRECOND[4]}"]='-1')
 ARGX+=(["${MATRIX[2]}_${PRECOND[5]}"]='-1')
 #adaptive
-ARGX+=(["${MATRIX[3]}_${PRECOND[0]}"]='-1')
-#ARGX+=(["${MATRIX[3]}_${PRECOND[0]}"]='6 3')
+#ARGX+=(["${MATRIX[3]}_${PRECOND[0]}"]='-1')
+ARGX+=(["${MATRIX[3]}_${PRECOND[0]}"]='6 3')
 ARGX+=(["${MATRIX[3]}_${PRECOND[1]}"]='-1')
 ARGX+=(["${MATRIX[3]}_${PRECOND[2]}"]='2 1')
 ARGX+=(["${MATRIX[3]}_${PRECOND[3]}"]='1 1')
@@ -54,8 +54,8 @@ ARGX+=(["${MATRIX[3]}_${PRECOND[5]}"]='-1')
 
 #road central
 
-#ARGX+=(["${MATRIX[4]}_${PRECOND[0]}"]='2 2')
-ARGX+=(["${MATRIX[4]}_${PRECOND[0]}"]='-1')
+ARGX+=(["${MATRIX[4]}_${PRECOND[0]}"]='2 2')
+#ARGX+=(["${MATRIX[4]}_${PRECOND[0]}"]='-1')
 ARGX+=(["${MATRIX[4]}_${PRECOND[1]}"]='4 0')
 ARGX+=(["${MATRIX[4]}_${PRECOND[2]}"]='1 1')
 ARGX+=(["${MATRIX[4]}_${PRECOND[3]}"]='4 4')
@@ -63,17 +63,17 @@ ARGX+=(["${MATRIX[4]}_${PRECOND[4]}"]='-1')
 ARGX+=(["${MATRIX[4]}_${PRECOND[5]}"]='-1')
 #road_usa
 
-#ARGX+=(["${MATRIX[5]}_${PRECOND[0]}"]='6 3')
-ARGX+=(["${MATRIX[5]}_${PRECOND[0]}"]='-1')
+ARGX+=(["${MATRIX[5]}_${PRECOND[0]}"]='6 3')
+#ARGX+=(["${MATRIX[5]}_${PRECOND[0]}"]='-1')
 ARGX+=(["${MATRIX[5]}_${PRECOND[1]}"]='8 0')
 ARGX+=(["${MATRIX[5]}_${PRECOND[2]}"]='3 1')
-ARGX+=(["${MATRIX[5]}_${PRECOND[3]}"]='8 8')
+ARGX+=(["${MATRIX[6]}_${PRECOND[3]}"]='8 8')
 ARGX+=(["${MATRIX[5]}_${PRECOND[4]}"]='-1')
 ARGX+=(["${MATRIX[5]}_${PRECOND[5]}"]='-1')
 #italy_osm
 
-ARGX+=(["${MATRIX[6]}_${PRECOND[0]}"]='-1')
-#ARGX+=(["${MATRIX[6]}_${PRECOND[0]}"]='6 6')
+#ARGX+=(["${MATRIX[6]}_${PRECOND[0]}"]='-1')
+ARGX+=(["${MATRIX[6]}_${PRECOND[0]}"]='6 6')
 ARGX+=(["${MATRIX[6]}_${PRECOND[1]}"]='16 0')
 ARGX+=(["${MATRIX[6]}_${PRECOND[2]}"]='4 4')
 ARGX+=(["${MATRIX[6]}_${PRECOND[3]}"]='16 16')

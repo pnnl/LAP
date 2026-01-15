@@ -18,6 +18,9 @@
 /* Small constant for numerical stability */
 #define LOBPCG_EPS 1e-8
 
+/* Uncomment to enable eigenvalue/eigenvector verification at the end of LOBPCG */
+/* #define LOBPCG_VERIFY */
+
 /*
  * CGS2: Classical Gram-Schmidt with re-orthogonalization
  * Orthonormalizes columns of V in-place
@@ -117,6 +120,129 @@ void cgs2(int n, int k, real_type *V) {
   free(a1);
   free(a2);
 #endif
+}
+
+/*
+ * Allocate CGS2 workspace for given maximum dimensions
+ * This allows memory to be allocated once and reused across multiple cgs2 calls
+ */
+cgs2_workspace* cgs2_workspace_alloc(int n_max, int k_max) {
+  cgs2_workspace *ws = (cgs2_workspace*) calloc(1, sizeof(cgs2_workspace));
+  ws->n_max = n_max;
+  ws->k_max = k_max;
+  
+  /* Always allocate host buffers */
+  ws->a1 = (real_type*) malloc(k_max * sizeof(real_type));
+  ws->a2 = (real_type*) malloc(k_max * sizeof(real_type));
+  
+#if (CUDA || HIP)
+  /* Also allocate device buffers for GPU builds */
+  ws->d_a1 = (real_type*) mallocForDevice(ws->d_a1, k_max, sizeof(real_type));
+  ws->d_a2 = (real_type*) mallocForDevice(ws->d_a2, k_max, sizeof(real_type));
+#else
+  ws->d_a1 = NULL;
+  ws->d_a2 = NULL;
+#endif
+  
+  return ws;
+}
+
+/*
+ * Free CGS2 workspace
+ */
+void cgs2_workspace_free(cgs2_workspace *ws) {
+  if (ws == NULL) return;
+  
+  free(ws->a1);
+  free(ws->a2);
+  
+#if (CUDA || HIP)
+  freeDevice(ws->d_a1);
+  freeDevice(ws->d_a2);
+#endif
+  
+  free(ws);
+}
+
+/*
+ * CGS2: Classical Gram-Schmidt with re-orthogonalization (with pre-allocated workspace)
+ * Orthonormalizes columns of V in-place
+ * V is n x k stored in column-major order
+ * ws: pre-allocated workspace (must have k_max >= k)
+ */
+void cgs2_with_workspace(int n, int k, real_type *V, cgs2_workspace *ws) {
+  real_type nrm;
+  real_type one = 1.0;
+  real_type zero = 0.0;
+  real_type neg_one = -1.0;
+  
+#if (CUDA || HIP)
+  real_type *d_a1 = ws->d_a1;
+  real_type *d_a2 = ws->d_a2;
+#else
+  real_type *a1 = ws->a1;
+  real_type *a2 = ws->a2;
+#endif
+  
+  /* Normalize first column */
+  nrm = nrm2(n, V);
+  if (nrm > LOBPCG_EPS) {
+    scal(n, 1.0 / nrm, V);
+  }
+  
+  /* Process remaining columns using block CGS2 */
+  for (int i = 1; i < k; ++i) {
+    real_type *vi = V + i * n;  /* Pointer to column i */
+    real_type *Vprev = V;       /* V(:,1:i-1) has i columns starting at V */
+    
+#if (CUDA || HIP)
+    /* 
+     * CGS2 block orthogonalization:
+     * a1 = V(:,1:i-1)' * V(:,i)  -->  GEMV: a1 = Vprev^T * vi
+     * V(:,i) = V(:,i) - V(:,1:i-1) * a1  -->  GEMV: vi = vi - Vprev * a1
+     * a2 = V(:,1:i-1)' * V(:,i)  -->  reorthogonalize
+     * V(:,i) = V(:,i) - V(:,1:i-1) * a2
+     */
+    
+    /* First pass: a1 = Vprev^T * vi */
+    gemm("T", "N", i, 1, n, &one, Vprev, n, vi, n, &zero, d_a1, i);
+    
+    /* vi = vi - Vprev * a1 */
+    gemm("N", "N", n, 1, i, &neg_one, Vprev, n, d_a1, i, &one, vi, n);
+    
+    /* Second pass (reorthogonalization): a2 = Vprev^T * vi */
+    gemm("T", "N", i, 1, n, &one, Vprev, n, vi, n, &zero, d_a2, i);
+    
+    /* vi = vi - Vprev * a2 */
+    gemm("N", "N", n, 1, i, &neg_one, Vprev, n, d_a2, i, &one, vi, n);
+    
+#else
+    /* CPU version using GEMM */
+    
+    /* First pass: a1 = Vprev^T * vi */
+    gemm("T", "N", i, 1, n, &one, Vprev, n, vi, n, &zero, a1, i);
+    
+    /* vi = vi - Vprev * a1 */
+    gemm("N", "N", n, 1, i, &neg_one, Vprev, n, a1, i, &one, vi, n);
+    
+    /* Second pass (reorthogonalization): a2 = Vprev^T * vi */
+    gemm("T", "N", i, 1, n, &one, Vprev, n, vi, n, &zero, a2, i);
+    
+    /* vi = vi - Vprev * a2 */
+    gemm("N", "N", n, 1, i, &neg_one, Vprev, n, a2, i, &one, vi, n);
+#endif
+    
+    /* Normalize column i */
+    nrm = nrm2(n, vi);
+    if (nrm > LOBPCG_EPS) {
+      scal(n, 1.0 / nrm, vi);
+    } else {
+      /* Vector is nearly zero after orthogonalization - set to small random vector */
+      /* This prevents numerical issues with zero columns */
+      vec_set(n, 0.0, vi);
+      vi[i % n] = 1.0;  /* Set one element to 1 to avoid zero vector */
+    }
+  }
 }
 
 /*
@@ -378,8 +504,18 @@ void lobpcg(int n,
   real_type *temp = (real_type*) calloc(n * nev, sizeof(real_type));
 #endif
 
+  /* Pre-allocate CGS2 workspace (reused across all cgs2 calls) */
+  cgs2_workspace *cgs2_ws = cgs2_workspace_alloc(n, max_subspace);
+  
+  /* Pre-allocate Y_small buffers for Rayleigh-Ritz projection (reused each iteration) */
+  real_type *h_Y_small = (real_type*) malloc(max_subspace * nev * sizeof(real_type));
+#if (CUDA || HIP)
+  real_type *d_Y_small;
+  d_Y_small = (real_type*) mallocForDevice(d_Y_small, max_subspace * nev, sizeof(real_type));
+#endif
+
   /* Initial orthonormalization using CGS2 */
-  cgs2(n, k, X);
+  cgs2_with_workspace(n, k, X, cgs2_ws);
   
   /* Main LOBPCG iteration */
   for (iter = 1; iter <= maxit; ++iter) {
@@ -572,7 +708,7 @@ void lobpcg(int n,
     /* Orthonormalize W for numerical stability in the eigenvalue solve */
     /* (MATLAB's eig(AS,BS) handles non-orthonormal bases, but our solver needs conditioning) */
     if (kW > 0) {
-      cgs2(n, kW, W);
+      cgs2_with_workspace(n, kW, W, cgs2_ws);
     }
     
     
@@ -665,7 +801,7 @@ void lobpcg(int n,
       real_type one_g = 1.0, zero_g = 0.0;
       
       /* Extract Y_small (ssize x k_active) for Xnew and Yw_Yp (ssize-kX x k_active) for Pnew */
-      real_type *h_Y_small = (real_type*) malloc(ssize * k_active * sizeof(real_type));
+      /* Using pre-allocated h_Y_small buffer (max size: max_subspace * nev) */
       for (int j = 0; j < k_active; ++j) {
         for (int i = 0; i < ssize; ++i) {
           h_Y_small[i + j * ssize] = h_Y[i + j * ssize];
@@ -673,9 +809,7 @@ void lobpcg(int n,
       }
       
 #if (CUDA || HIP)
-      /* Copy Y_small to device */
-      real_type *d_Y_small;
-      d_Y_small = (real_type*) mallocForDevice(d_Y_small, ssize * k_active, sizeof(real_type));
+      /* Copy Y_small to pre-allocated device buffer */
       memcpyDevice(d_Y_small, h_Y_small, ssize * k_active, sizeof(real_type), "H2D");
       
       /* Xnew = S * Y_small using device GEMM */
@@ -694,8 +828,6 @@ void lobpcg(int n,
         real_type *d_Yp = d_Y_small + (kX + kW);  /* Offset to Yp block */
         gemm("N", "N", n, k_active, kP, &one_g, P, n, d_Yp, ssize, &one_g, Pnew, n);
       }
-      
-      freeDevice(d_Y_small);
 #else
       /* CPU version: Xnew = S * Y_small */
       gemm("N", "N", n, k_active, ssize, &one_g, S, n, h_Y_small, ssize, &zero_g, Xnew, n);
@@ -711,12 +843,10 @@ void lobpcg(int n,
         gemm("N", "N", n, k_active, kP, &one_g, P, n, h_Yp, ssize, &one_g, Pnew, n);
       }
 #endif
-      
-      free(h_Y_small);
     }
     
     /* Stabilize Xnew with full orthonormalization (like MATLAB line 129: [Xnew, ~] = cgs2(Xnew)) */
-    cgs2(n, k_active, Xnew);
+    cgs2_with_workspace(n, k_active, Xnew, cgs2_ws);
     
     /* Stabilize Pnew: orthogonalize against Xnew using block GEMM */
     /* Pnew = Pnew - Xnew * (Xnew' * Pnew) */
@@ -732,7 +862,7 @@ void lobpcg(int n,
     }
     
     /* Orthonormalize Pnew (MATLAB line 140: [Pnew, Rp] = cgs2(Pnew)) */
-    cgs2(n, k_active, Pnew);
+    cgs2_with_workspace(n, k_active, Pnew, cgs2_ws);
     
     /* ------------------------------ */
     /* Update for next iteration      */
@@ -797,6 +927,84 @@ void lobpcg(int n,
   *it = iter;
   *nconv = n_locked;
   
+  /* ------------------------------ */
+  /* Optional eigenvalue/eigenvector verification */
+  /* Define LOBPCG_VERIFY to enable this check */
+  /* ------------------------------ */
+#ifdef LOBPCG_VERIFY
+  {
+    printf("\n=== LOBPCG Verification ===\n");
+    
+    /* Allocate temporary vector for A*x */
+    real_type *Ax_verify;
+#if (CUDA || HIP)
+    Ax_verify = (real_type*) mallocForDevice(Ax_verify, n, sizeof(real_type));
+#else
+    Ax_verify = (real_type*) malloc(n * sizeof(real_type));
+#endif
+    
+    real_type max_rel_error = 0.0;
+    int all_verified = 1;
+    
+    for (int i = 0; i < nev; ++i) {
+      real_type *xi = X + i * n;  /* i-th eigenvector */
+      real_type li = lambda[i];   /* i-th eigenvalue */
+      
+      /* Compute Ax = A * x_i */
+      real_type alpha_v = 1.0, beta_v = 0.0;
+      csr_matvec(n, nnz, ia, ja, a, xi, Ax_verify, &alpha_v, &beta_v, "A");
+      
+      /* Compute residual: r = Ax - lambda*x */
+      /* res_norm = ||Ax - lambda*x|| */
+      /* x_norm = ||x|| */
+      real_type res_norm = 0.0;
+      real_type x_norm = nrm2(n, xi);
+      
+#if (CUDA || HIP)
+      /* For GPU: compute on device using axpy and nrm2 */
+      /* Copy xi to temp, then compute Ax - lambda*xi */
+      vec_copy(n, Ax_verify, temp);  /* temp = Ax */
+      real_type neg_lambda = -li;
+      axpy(n, &neg_lambda, xi, temp);  /* temp = Ax - lambda*x */
+      res_norm = nrm2(n, temp);
+#else
+      /* For CPU: directly compute the residual */
+      for (int j = 0; j < n; ++j) {
+        real_type diff = Ax_verify[j] - li * xi[j];
+        res_norm += diff * diff;
+      }
+      res_norm = sqrt(res_norm);
+#endif
+      
+      /* Relative error: ||Ax - lambda*x|| / (||x|| * |lambda|) */
+      real_type abs_lambda = (li < 0) ? -li : li;
+      real_type rel_error = res_norm / (x_norm * (abs_lambda > LOBPCG_EPS ? abs_lambda : 1.0));
+      
+      if (rel_error > max_rel_error) {
+        max_rel_error = rel_error;
+      }
+      
+      /* Check if eigenpair is valid (relative error < 10*tol) */
+      int verified = (rel_error < 10.0 * tol) ? 1 : 0;
+      if (!verified) all_verified = 0;
+      
+      printf("  Eigenpair %3d: lambda = %16.10e, ||Ax-lx||/||x||/|l| = %12.6e  [%s]\n",
+             i + 1, li, rel_error, verified ? "OK" : "FAILED");
+    }
+    
+    printf("----------------------------\n");
+    printf("Max relative error: %12.6e\n", max_rel_error);
+    printf("Verification: %s\n", all_verified ? "PASSED" : "FAILED");
+    printf("===========================\n\n");
+    
+#if (CUDA || HIP)
+    freeDevice(Ax_verify);
+#else
+    free(Ax_verify);
+#endif
+  }
+#endif /* LOBPCG_VERIFY */
+  
   /* Cleanup */
 #if (CUDA || HIP)
   freeDevice(d_AX);
@@ -831,7 +1039,10 @@ void lobpcg(int n,
   free(h_lambda);
   free(locked);
   free(h_orth_coeff);
+  free(h_Y_small);
+  cgs2_workspace_free(cgs2_ws);
 #if (CUDA || HIP)
   freeDevice(d_orth_coeff);
+  freeDevice(d_Y_small);
 #endif
 }

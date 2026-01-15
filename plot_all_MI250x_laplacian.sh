@@ -11,7 +11,6 @@ MATRIX=('delaunay_n24/delaunay_n24.mtx' 't60k/t60k.mtx' 'hugebubbles-00000/hugeb
 declare -a time_res
 mkdir -p plots_cg
 cd plots_cg
-rm /home/kswirydo/LAP_PNNL/LAPLACIAN_runtimes/*
 for idx in {1..2}; do
   
   echo "Matrix,Preconditioner,Execution Time (in seconds)" >> /home/kswirydo/LAP_PNNL/LAPLACIAN_runtimes/runtime_MI250_REP_${idx}.csv
@@ -85,6 +84,7 @@ for idx in {1..2}; do
    echo $mtxs '| Incomple Cholesky |' ${time_res[5]}
    echo
    echo
+echo "CHUJEMUE PRINTING TO FILES"
    echo $mtxs ',Gauss-Seidel,'  ${time_res[0]} >> /home/kswirydo/LAP_PNNL/LAPLACIAN_runtimes/runtime_MI250_REP_${idx}.csv
    echo $mtxs ',Two Stage GS,'  ${time_res[1]} >> /home/kswirydo/LAP_PNNL/LAPLACIAN_runtimes/runtime_MI250_REP_${idx}.csv
    echo $mtxs ',Two Stage Jac+GS,'  ${time_res[2]} >> /home/kswirydo/LAP_PNNL/LAPLACIAN_runtimes/runtime_MI250_REP_${idx}.csv

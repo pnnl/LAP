@@ -18,7 +18,7 @@ for idx in {1..2}; do
 
   mtxs=`dirname $mtx`
   dir_name="/home/kswirydo/LAP_PNNL/REP_${idx}_MI300x_CG/${mtxs}/power_results/"
-  fig_name="${mtxs}_REP${idx}_MI300X"
+  fig_name="${mtxs}_REP${idx}_MI300X.png"
   fig_title='"AMD MI300X: '${mtxs}'"'
   command="python3  /home/kswirydo/power_analysis/plot_power_profile_multi.py --folder ${dir_name} --figure $fig_name  --title ${fig_title}"
   echo $command
@@ -91,11 +91,11 @@ for idx in {1..2}; do
    echo $mtxs ',iterative Jacobi,' ${time_res[4]} >> /home/kswirydo/LAP_PNNL/CG_runtimes/runtime_MI300x_REP_${idx}.csv
    echo $mtxs ',Incomple Cholesky,' ${time_res[5]} >> /home/kswirydo/LAP_PNNL/CG_runtimes/runtime_MI300x_REP_${idx}.csv
 done
-rm /home/kswirydo/LAP_PNNL/CG_energy/aaa_REP${idx}.csv
-echo "Matrix,Preconditioner,Energy" >> /home/kswirydo/LAP_PNNL/CG_energy/aaa_REP${idx}.csv
-cd /home/kswirydo/LAP_PNNL/CG_energy
+rm /home/kswirydo/LAP_PNNL/plots_cg/aaa_REP${idx}.csv
+echo "Matrix,Preconditioner,Energy" >> /home/kswirydo/LAP_PNNL/plots_cg/aaa_REP${idx}.csv
+cd /home/kswirydo/LAP_PNNL/plots_cg
 rm energy_MI300x_REP_${idx}.csv
 #cat *_REP${idx}.csv 
-cat *_REP${idx}.csv >> energy_MI300x_REP_${idx}.csv
+cat *_REP${idx}_MI300X.csv >> energy_MI300x_REP_${idx}.csv
 cd /home/kswirydo/LAP_PNNL/plots_cg/
 done
