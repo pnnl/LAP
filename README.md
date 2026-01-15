@@ -77,7 +77,7 @@ Solves graph Laplacian linear systems (converts adjacency matrix to Laplacian in
 
 **Arguments:**
 - `matrix.mtx` - Adjacency matrix file in Matrix Market format
-- `preconditioner` - Preconditioner type: `none`, `it_jacobi`, `line_jacobi`, `GS_it`, `GS_it2`, `GS_std`, `ichol`
+- `preconditioner` - Preconditioner type: `none`, `it_jacobi`, `line_jacobi`, `GS_it`, `GS_it2`, `GS_std`
 - `tolerance` - Convergence tolerance (e.g., `1e-12`)
 - `maxit` - Maximum CG iterations
 - `M` - Outer iterations for preconditioner
@@ -98,7 +98,7 @@ Solves general sparse linear systems using Preconditioned Conjugate Gradient.
 
 **Arguments:**
 - `matrix.mtx` - SPD matrix file in Matrix Market format
-- `preconditioner` - Preconditioner type: `none`, `it_jacobi`, `line_jacobi`, `GS_it`, `GS_it2`, `GS_std`
+- `preconditioner` - Preconditioner type: `none`, `it_jacobi`, `line_jacobi`, `GS_it`, `GS_it2`, `GS_std`, `ichol`
 - `tolerance` - Convergence tolerance (e.g., `1e-12`)
 - `maxit` - Maximum CG iterations
 - `M` - Outer iterations for preconditioner
@@ -159,7 +159,7 @@ Computes smallest eigenvalues/eigenvectors using the Locally Optimal Block Preco
 | `GS_it` | Iterative Gauss-Seidel |
 | `GS_it2` | Iterative Gauss-Seidel (variant 2) |
 | `GS_std` | Standard Gauss-Seidel |
-| `ichol` | Incomplete Cholesky (Laplacian only) |
+| `ichol` | Incomplete Cholesky (CG only, requires SPD matrix) |
 
 ## License
 LAP comes with [BSD-3 license](https://en.wikipedia.org/wiki/BSD_licenses).
