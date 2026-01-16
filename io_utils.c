@@ -270,18 +270,21 @@ void split(mmatrix *A, mmatrix *L, mmatrix *U, mmatrix *D)
   /* we need access to L, U, and D explicitely
    * we need degree of every row
    * allocate L and U bits and pieces; */
+  
+  /* Use nnz_unpacked for allocation since symmetric matrices are expanded */
+  int off_diag_nnz = A->nnz_unpacked - A->n;
 
   L->csr_ia = (int *) calloc (A->n + 1, sizeof(int));
   U->csr_ia = (int *) calloc (A->n + 1, sizeof(int));
   D->csr_ia = (int *) calloc (A->n + 1, sizeof(int));
 
 
-  L->csr_ja = (int *) calloc (A->nnz - A->n, sizeof(int));
-  U->csr_ja = (int *) calloc (A->nnz - A->n, sizeof(int));
+  L->csr_ja = (int *) calloc (off_diag_nnz, sizeof(int));
+  U->csr_ja = (int *) calloc (off_diag_nnz, sizeof(int));
   D->csr_ja = (int *) calloc (A->n, sizeof(int));
 
-  L->csr_vals = (real_type *) calloc (A->nnz - A->n, sizeof(real_type));
-  U->csr_vals = (real_type *) calloc (A->nnz - A->n, sizeof(real_type));
+  L->csr_vals = (real_type *) calloc (off_diag_nnz, sizeof(real_type));
+  U->csr_vals = (real_type *) calloc (off_diag_nnz, sizeof(real_type));
   D->csr_vals = (real_type *) calloc (A->n, sizeof(real_type));
 
   int iu = 0, il = 0;
@@ -314,11 +317,11 @@ void split(mmatrix *A, mmatrix *L, mmatrix *U, mmatrix *D)
   U->csr_ia[A->n] = iu;
   L->n = A->n;
   L->m = A->m;
-  L->nnz = A->nnz-A->n;
+  L->nnz = il;  /* Use actual count, not A->nnz-A->n which is wrong for symmetric matrices */
 
   U->n = A->n;
   U->m = A->m;
-  U->nnz = A->nnz-A->n;
+  U->nnz = iu;  /* Use actual count */
 
   D->n = A->n;
   D->m = A->m;
@@ -370,18 +373,21 @@ void create_L_and_split(mmatrix *A, mmatrix *L, mmatrix *U, mmatrix *D, int weig
    * w decides whether weighted (w == 1) or not (w == 0)
    * we need degree of every row */
 
+  /* Use nnz_unpacked for allocation since symmetric matrices are expanded */
+  int off_diag_nnz = A->nnz_unpacked - A->n;
+
   /* allocate L and U bits and pieces; */
   L->csr_ia = (int *) calloc (A->n + 1, sizeof(int));
   U->csr_ia = (int *) calloc (A->n + 1, sizeof(int));
   D->csr_ia = (int *) calloc (A->n + 1, sizeof(int));
 
-  L->csr_ja = (int *) calloc (A->nnz - A->n, sizeof(int));
-  U->csr_ja = (int *) calloc (A->nnz - A->n, sizeof(int));
+  L->csr_ja = (int *) calloc (off_diag_nnz, sizeof(int));
+  U->csr_ja = (int *) calloc (off_diag_nnz, sizeof(int));
   D->csr_ja = (int *) calloc (A->n, sizeof(int));
 
 
-  L->csr_vals = (real_type *) calloc (A->nnz - A->n, sizeof(real_type));
-  U->csr_vals = (real_type *) calloc (A->nnz - A->n, sizeof(real_type));
+  L->csr_vals = (real_type *) calloc (off_diag_nnz, sizeof(real_type));
+  U->csr_vals = (real_type *) calloc (off_diag_nnz, sizeof(real_type));
   D->csr_vals = (real_type *) calloc (A->n, sizeof(real_type));
 
   int *DD = (int *) calloc(A->n, sizeof(int));
@@ -442,15 +448,17 @@ void create_L_and_split(mmatrix *A, mmatrix *L, mmatrix *U, mmatrix *D, int weig
   U->csr_ia[A->n] = iu;
   L->n = A->n;
   L->m = A->m;
-  L->nnz = A->nnz-A->n;
+  L->nnz = il;  /* Use actual count */
 
   U->n = A->n;
   U->m = A->m;
-  U->nnz = A->nnz-A->n;
+  U->nnz = iu;  /* Use actual count */
 
   D->n = A->n;
   D->m = A->m;
   D->nnz = A->n;
+
+  free(DD);
 
 #if 0	
   printf("\n\n ==== A ==== \n");
@@ -462,7 +470,7 @@ void create_L_and_split(mmatrix *A, mmatrix *L, mmatrix *U, mmatrix *D, int weig
     printf("\n");
   }
 
-  printf("\n\n ==== D ==== \n");
+  printf("\n\n ==== D ==== \n")
   for (int i = 0; i < 10; i++) {
     printf("this is row %d \n", i);
     for (int j = D->csr_ia[i]; j < D->csr_ia[i + 1]; ++j) { 

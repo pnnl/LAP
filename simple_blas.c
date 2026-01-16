@@ -447,15 +447,47 @@ void simple_dsygv(const int n,
     Acopy[i] = A[i];
   }
   
+  /* Compute condition estimate based on diagonal range */
+  real_type min_diag = fabs(B[0]);
+  real_type max_diag = fabs(B[0]);
+  real_type trace = 0.0;
+  for (int i = 0; i < n; ++i) {
+    real_type d = fabs(B[i + i * n]);
+    trace += d;
+    if (d < min_diag) min_diag = d;
+    if (d > max_diag) max_diag = d;
+  }
+  
+  /* Preemptive regularization if B appears ill-conditioned */
+  real_type cond_est = (min_diag > 1e-14) ? max_diag / min_diag : 1e14;
+  if (cond_est > 1e10 || min_diag < 1e-12) {
+    real_type reg = 1e-10 * (trace / n + 1.0);
+    if (min_diag < 1e-12) {
+      reg = 1e-8 * (trace / n + 1.0);
+    }
+    for (int i = 0; i < n; ++i) {
+      Bcopy[i + i * n] = B[i + i * n] + reg;
+    }
+  }
+  
   /* Cholesky: B = L*L' */
   int ret = simple_cholesky(n, Bcopy);
   if (ret != 0) {
-    fprintf(stderr, "Warning: Cholesky failed, B not positive definite. Using regularization.\n");
-    /* Add small regularization */
-    for (int i = 0; i < n; ++i) {
-      Bcopy[i + i * n] = B[i + i * n] + 1e-10;
+    /* Cholesky failed - use progressive regularization */
+    real_type reg = 1e-8 * (trace / n + 1.0);
+    for (int attempt = 0; attempt < 5 && ret != 0; ++attempt) {
+      for (int i = 0; i < n; ++i) {
+        Bcopy[i + i * n] = B[i + i * n] + reg;
+      }
+      ret = simple_cholesky(n, Bcopy);
+      reg *= 10.0;
     }
-    simple_cholesky(n, Bcopy);
+    if (ret != 0) {
+      for (int i = 0; i < n; ++i) {
+        Bcopy[i + i * n] = B[i + i * n] + 1e-4 * (trace / n + 1.0);
+      }
+      simple_cholesky(n, Bcopy);
+    }
   }
   
   /* L is now in lower triangle of Bcopy */

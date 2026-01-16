@@ -1,7 +1,7 @@
 /*
  * LOBPCG Driver - Eigenvalue solver for sparse symmetric matrices
  * 
- * Usage: ./lap_lobpcg <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev>
+ * Usage: ./lap_lobpcg <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev> [seed]
  * 
  * Arguments:
  *   matrix.mtx    - Matrix file in Matrix Market format
@@ -12,6 +12,7 @@
  *   M             - Outer iterations for preconditioner
  *   K             - Inner iterations for preconditioner
  *   nev           - Number of eigenvalues/eigenvectors to compute
+ *   seed          - (Optional) Random seed for reproducibility (e.g., 12345)
  */
 
 #include <stdio.h>
@@ -50,15 +51,42 @@ void generate_random_initial_guess(int n, int nev, real_type *X) {
   }
 }
 
+/* Generate initial guess for Laplacian mode on host */
+/* First column is the constant vector (eigenvector for lambda=0) */
+/* Remaining columns are random */
+void generate_laplacian_initial_guess(int n, int nev, real_type *X) {
+  /* First column: constant vector [1, 1, 1, ..., 1]^T normalized */
+  real_type norm_factor = 1.0 / sqrt((real_type)n);
+  for (int i = 0; i < n; ++i) {
+    X[i] = norm_factor;
+  }
+  
+  /* Remaining columns: random, but orthogonalized against the first column */
+  for (int j = 1; j < nev; ++j) {
+    /* Generate random column */
+    for (int i = 0; i < n; ++i) {
+      X[i + j * n] = 2.0 * ((real_type)rand() / (real_type)RAND_MAX) - 1.0;
+    }
+    
+    /* Subtract projection onto first column (make orthogonal to constant vector) */
+    /* Since first column is normalized constant vector, projection = mean(column) * sqrt(n) */
+    real_type sum = 0.0;
+    for (int i = 0; i < n; ++i) {
+      sum += X[i + j * n];
+    }
+    real_type proj = sum * norm_factor;  /* dot product with normalized constant vector */
+    for (int i = 0; i < n; ++i) {
+      X[i + j * n] -= proj * norm_factor;
+    }
+  }
+}
+
 int main(int argc, char *argv[]) {
   real_type time_LOBPCG = 0.0;
   struct timeval t1, t2;
   
-  /* Seed random number generator */
-  srand(time(NULL));
-  
   if (argc < 9) {
-    printf("Usage: %s <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev>\n", argv[0]);
+    printf("Usage: %s <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev> [seed]\n", argv[0]);
     printf("  matrix.mtx     - Matrix file in Matrix Market format\n");
     printf("  mode           - Matrix mode: 'normal' or 'laplacian'\n");
     printf("  preconditioner - Preconditioner type: none, it_jacobi, line_jacobi, GS_it, GS_it2, GS_std\n");
@@ -67,6 +95,7 @@ int main(int argc, char *argv[]) {
     printf("  M              - Outer iterations for preconditioner\n");
     printf("  K              - Inner iterations for preconditioner\n");
     printf("  nev            - Number of eigenvalues/eigenvectors to compute\n");
+    printf("  seed           - (Optional) Random seed for reproducibility (e.g., 12345)\n");
     return 1;
   }
   
@@ -78,6 +107,15 @@ int main(int argc, char *argv[]) {
   int M = atoi(argv[6]);
   int K = atoi(argv[7]);
   int nev = atoi(argv[8]);
+  
+  /* Seed random number generator */
+  unsigned int random_seed;
+  if (argc >= 10) {
+    random_seed = (unsigned int) atoi(argv[9]);
+  } else {
+    random_seed = (unsigned int) time(NULL);
+  }
+  srand(random_seed);
   
   /* Validate matrix mode */
   int use_laplacian = 0;
@@ -125,6 +163,7 @@ int main(int argc, char *argv[]) {
   printf("  Max iterations    : %d\n", lobpcg_maxit);
   printf("  M (outer iter)    : %d\n", M);
   printf("  K (inner iter)    : %d\n", K);
+  printf("  Random seed       : %u\n", random_seed);
   printf("======================================================\n\n");
   
   if (lobpcg_maxit > MAXIT) {
@@ -163,9 +202,14 @@ int main(int argc, char *argv[]) {
   d_X = (real_type *) mallocForDevice(d_X, A->n * nev, sizeof(real_type));
   d_d = (real_type *) mallocForDevice(d_d, A->n, sizeof(real_type));
   
-  /* Generate random initial guess on host and copy to device */
+  /* Generate initial guess on host and copy to device */
   real_type *h_X = (real_type *) calloc(A->n * nev, sizeof(real_type));
-  generate_random_initial_guess(A->n, nev, h_X);
+  if (use_laplacian) {
+    /* For Laplacian, first column is constant vector (eigenvector for lambda=0) */
+    generate_laplacian_initial_guess(A->n, nev, h_X);
+  } else {
+    generate_random_initial_guess(A->n, nev, h_X);
+  }
   memcpyDevice(d_X, h_X, A->n * nev, sizeof(real_type), "H2D");
   free(h_X);
   
@@ -352,9 +396,13 @@ int main(int argc, char *argv[]) {
   prec_data->aux_vec2 = (real_type *) calloc(A->n, sizeof(real_type));
   prec_data->aux_vec3 = (real_type *) calloc(A->n, sizeof(real_type));
   
-  /* Allocate and generate random initial guess */
+  /* Allocate and generate initial guess */
   real_type *X = (real_type *) calloc(A->n * nev, sizeof(real_type));
-  generate_random_initial_guess(A->n, nev, X);
+  if (use_laplacian) {
+    generate_laplacian_initial_guess(A->n, nev, X);
+  } else {
+    generate_random_initial_guess(A->n, nev, X);
+  }
 #endif
   
   /* Run LOBPCG */

@@ -667,6 +667,42 @@ void lobpcg(int n,
       prec_function(ia, ja, a, nnz, prec_data, R + i * n, W + i * n);
     }
     
+    /* Orthogonalize W and P against locked vectors (like MATLAB lines 64-67) */
+    /* This is critical for stability when eigenpairs are locked */
+    if (n_locked > 0) {
+      real_type one_orth = 1.0, zero_orth = 0.0, neg_one_orth = -1.0;
+      /* W = W - X_lock * (X_lock' * W) */
+#if (CUDA || HIP)
+      /* Need temporary buffer for n_locked x k_active coefficients */
+      real_type *h_lock_coeff = (real_type*) malloc(n_locked * k_active * sizeof(real_type));
+      real_type *d_lock_coeff;
+      d_lock_coeff = (real_type*) mallocForDevice(d_lock_coeff, n_locked * k_active, sizeof(real_type));
+      
+      gemm("T", "N", n_locked, k_active, n, &one_orth, X_lock, n, W, n, &zero_orth, d_lock_coeff, n_locked);
+      gemm("N", "N", n, k_active, n_locked, &neg_one_orth, X_lock, n, d_lock_coeff, n_locked, &one_orth, W, n);
+      
+      /* P = P - X_lock * (X_lock' * P) */
+      if (has_P) {
+        gemm("T", "N", n_locked, k_active, n, &one_orth, X_lock, n, P, n, &zero_orth, d_lock_coeff, n_locked);
+        gemm("N", "N", n, k_active, n_locked, &neg_one_orth, X_lock, n, d_lock_coeff, n_locked, &one_orth, P, n);
+      }
+      
+      freeDevice(d_lock_coeff);
+      free(h_lock_coeff);
+#else
+      real_type *lock_coeff = (real_type*) malloc(n_locked * k_active * sizeof(real_type));
+      
+      gemm("T", "N", n_locked, k_active, n, &one_orth, X_lock, n, W, n, &zero_orth, lock_coeff, n_locked);
+      gemm("N", "N", n, k_active, n_locked, &neg_one_orth, X_lock, n, lock_coeff, n_locked, &one_orth, W, n);
+      
+      if (has_P) {
+        gemm("T", "N", n_locked, k_active, n, &one_orth, X_lock, n, P, n, &zero_orth, lock_coeff, n_locked);
+        gemm("N", "N", n, k_active, n_locked, &neg_one_orth, X_lock, n, lock_coeff, n_locked, &one_orth, P, n);
+      }
+      
+      free(lock_coeff);
+#endif
+    }
     
     /* Orthogonalize W against X: W = W - X * (X' * W) */
     {
@@ -770,13 +806,83 @@ void lobpcg(int n,
       }
     }
     
+    /* ------------------------------ */
+    /* Check condition of B - if ill-conditioned, restart without P */
+    /* ------------------------------ */
+    real_type min_diag_B = fabs(h_BS[0]);
+    real_type max_diag_B = fabs(h_BS[0]);
+    for (int i = 1; i < ssize; ++i) {
+      real_type d = fabs(h_BS[i + i * ssize]);
+      if (d < min_diag_B) min_diag_B = d;
+      if (d > max_diag_B) max_diag_B = d;
+    }
+    real_type cond_B = (min_diag_B > 1e-14) ? max_diag_B / min_diag_B : 1e16;
     
+    /* If B is severely ill-conditioned and we have P, retry without P */
+    if (cond_B > 1e12 && kP > 0) {
+      /* Rebuild S without P */
+      kP = 0;
+      ssize = kX + kW;
+      
+      /* Recompute AS and BS without P */
+      csr_matmat(n, ssize, nnz, ia, ja, a, S, AS_temp, 1.0, 0.0);
+      
+      for (int i = 0; i < ssize; ++i) {
+        for (int j = 0; j < ssize; ++j) {
+          h_AS[i + j * ssize] = dot(n, S + i * n, AS_temp + j * n);
+          h_BS[i + j * ssize] = dot(n, S + i * n, S + j * n);
+        }
+      }
+      
+      for (int i = 0; i < ssize; ++i) {
+        for (int j = i + 1; j < ssize; ++j) {
+          real_type avg_g = 0.5 * (h_AS[i + j * ssize] + h_AS[j + i * ssize]);
+          real_type avg_b = 0.5 * (h_BS[i + j * ssize] + h_BS[j + i * ssize]);
+          h_AS[i + j * ssize] = avg_g;
+          h_AS[j + i * ssize] = avg_g;
+          h_BS[i + j * ssize] = avg_b;
+          h_BS[j + i * ssize] = avg_b;
+        }
+      }
+      
+      has_P = 0;  /* Reset P for next iteration */
+    }
     
     /* ------------------------------ */
     /* Solve generalized eigenvalue problem: G*y = theta*B*y */
     /* ------------------------------ */
     dsygv(ssize, h_AS, h_BS, h_theta, h_Y);
     
+    /* ------------------------------ */
+    /* Sanity check: if eigenvalues are unreasonable, skip this update */
+    /* This detects when the eigenvalue solver produced garbage */
+    /* ------------------------------ */
+    int skip_update = 0;
+    
+    /* Check if smallest eigenvalue is negative (shouldn't happen for SPD) or too large */
+    /* For graph Laplacian, smallest eigenvalue should be near 0 */
+    /* Use the current lambda estimate as reference */
+    real_type lambda_ref = (h_lambda[0] > 0) ? h_lambda[0] : 1.0;
+    if (h_theta[0] < -1e-6 * lambda_ref || h_theta[0] > 1e6 * (lambda_ref + 1.0)) {
+      /* Eigenvalue solver likely failed - skip update, reset P */
+      skip_update = 1;
+      has_P = 0;
+    }
+    
+    /* Also check for NaN/Inf in eigenvalues */
+    for (int i = 0; i < k_active && !skip_update; ++i) {
+      if (h_theta[i] != h_theta[i] || h_theta[i] > 1e30 || h_theta[i] < -1e30) {
+        skip_update = 1;
+        has_P = 0;
+        break;
+      }
+    }
+    
+    if (skip_update) {
+      /* Don't update X, P - just continue with current approximation */
+      /* The residual computation next iteration will provide new search direction */
+      continue;
+    }
     
     /* Extract first k_active Ritz vectors */
     /* Y contains eigenvectors as columns, theta contains eigenvalues (sorted ascending) */

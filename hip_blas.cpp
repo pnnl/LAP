@@ -877,25 +877,46 @@ void hip_dsygv(const int n,
     Acopy[i] = A[i];
   }
   
-  /* Cholesky: B = L*L' */
-  int ret = hip_cholesky_host(n, Bcopy);
-  if (ret != 0) {
-    fprintf(stderr, "Warning: Cholesky failed in hip_dsygv. Using regularization.\n");
-    /* Use relative regularization based on trace of B */
-    real_type trace = 0.0;
-    for (int i = 0; i < n; ++i) {
-      trace += fabs(B[i + i * n]);
-    }
+  /* Compute condition estimate based on diagonal range */
+  real_type min_diag = fabs(B[0]);
+  real_type max_diag = fabs(B[0]);
+  real_type trace = 0.0;
+  for (int i = 0; i < n; ++i) {
+    real_type d = fabs(B[i + i * n]);
+    trace += d;
+    if (d < min_diag) min_diag = d;
+    if (d > max_diag) max_diag = d;
+  }
+  
+  /* Preemptive regularization if B appears ill-conditioned */
+  /* This is more robust than waiting for Cholesky to fail */
+  real_type cond_est = (min_diag > 1e-14) ? max_diag / min_diag : 1e14;
+  if (cond_est > 1e10 || min_diag < 1e-12) {
     real_type reg = 1e-10 * (trace / n + 1.0);
+    if (min_diag < 1e-12) {
+      reg = 1e-8 * (trace / n + 1.0);  /* Stronger regularization for very small diagonals */
+    }
     for (int i = 0; i < n; ++i) {
       Bcopy[i + i * n] = B[i + i * n] + reg;
     }
-    ret = hip_cholesky_host(n, Bcopy);
-    if (ret != 0) {
-      /* More aggressive regularization */
-      reg = 1e-6 * (trace / n + 1.0);
+  }
+  
+  /* Cholesky: B = L*L' */
+  int ret = hip_cholesky_host(n, Bcopy);
+  if (ret != 0) {
+    /* Cholesky failed - use progressive regularization */
+    real_type reg = 1e-8 * (trace / n + 1.0);
+    for (int attempt = 0; attempt < 5 && ret != 0; ++attempt) {
       for (int i = 0; i < n; ++i) {
         Bcopy[i + i * n] = B[i + i * n] + reg;
+      }
+      ret = hip_cholesky_host(n, Bcopy);
+      reg *= 10.0;  /* Increase regularization each attempt */
+    }
+    if (ret != 0) {
+      /* Last resort: very aggressive regularization */
+      for (int i = 0; i < n; ++i) {
+        Bcopy[i + i * n] = B[i + i * n] + 1e-4 * (trace / n + 1.0);
       }
       hip_cholesky_host(n, Bcopy);
     }

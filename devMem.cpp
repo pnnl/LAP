@@ -32,9 +32,9 @@ void memcpyDevice (void *dest, void *src, int n, int size, char *type){
   }
   if (strcmp("D2D", type) == 0){
 #if CUDA
-    cudaMemcpy(dest, src, size * n, cudaMemcpyDeviceToHost);
+    cudaMemcpy(dest, src, size * n, cudaMemcpyDeviceToDevice);
 #elif HIP
-    hipMemcpy(dest, src, size * n, hipMemcpyDeviceToHost);
+    hipMemcpy(dest, src, size * n, hipMemcpyDeviceToDevice);
 #endif
   }
 }
