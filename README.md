@@ -131,7 +131,7 @@ Benchmarks Sparse Matrix-Vector multiplication.
 Computes smallest eigenvalues/eigenvectors using the Locally Optimal Block Preconditioned Conjugate Gradient method.
 
 ```bash
-./lap_<backend>_lobpcg <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev>
+./lap_<backend>_lobpcg <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev> [seed]
 ```
 
 **Arguments:**
@@ -143,11 +143,18 @@ Computes smallest eigenvalues/eigenvectors using the Locally Optimal Block Preco
 - `M` - Outer iterations for preconditioner
 - `K` - Inner iterations for preconditioner
 - `nev` - Number of eigenvalues/eigenvectors to compute
+- `seed` - (Optional) Random seed for reproducibility. If omitted, uses current time.
 
-**Example:**
+**Examples:**
 ```bash
+# Using automatic random seed (based on current time)
 ./lap_hip_lobpcg delaunay_n24/delaunay_n24.mtx laplacian it_jacobi 1e-8 500 4 4 10
+
+# Using fixed seed for reproducible results
+./lap_hip_lobpcg delaunay_n24/delaunay_n24.mtx laplacian it_jacobi 1e-8 500 4 4 10 12345
 ```
+
+**Note:** The random seed controls the initial guess for eigenvectors. Using the same seed guarantees reproducible results across runs. The seed used is printed in the output summary.
 
 ## Preconditioners
 
