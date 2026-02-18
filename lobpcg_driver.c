@@ -1,7 +1,7 @@
 /*
  * LOBPCG Driver - Eigenvalue solver for sparse symmetric matrices
  * 
- * Usage: ./lap_lobpcg <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev> [seed]
+ * Usage: ./lap_lobpcg <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev> [seed] [verbose]
  * 
  * Arguments:
  *   matrix.mtx    - Matrix file in Matrix Market format
@@ -13,6 +13,7 @@
  *   K             - Inner iterations for preconditioner
  *   nev           - Number of eigenvalues/eigenvectors to compute
  *   seed          - (Optional) Random seed for reproducibility (e.g., 12345)
+ *   verbose       - (Optional) Verbose output: 0=final only (default), 1=per-iteration details
  */
 
 #include <stdio.h>
@@ -39,7 +40,7 @@
 #include "devMem.h"
 #endif
 
-#define MAXIT 10000
+#define MAXIT 50000
 
 /* Generate random initial guess on host */
 void generate_random_initial_guess(int n, int nev, real_type *X) {
@@ -86,7 +87,7 @@ int main(int argc, char *argv[]) {
   struct timeval t1, t2;
   
   if (argc < 9) {
-    printf("Usage: %s <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev> [seed]\n", argv[0]);
+    printf("Usage: %s <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev> [seed] [verbose]\n", argv[0]);
     printf("  matrix.mtx     - Matrix file in Matrix Market format\n");
     printf("  mode           - Matrix mode: 'normal' or 'laplacian'\n");
     printf("  preconditioner - Preconditioner type: none, it_jacobi, line_jacobi, GS_it, GS_it2, GS_std\n");
@@ -96,6 +97,7 @@ int main(int argc, char *argv[]) {
     printf("  K              - Inner iterations for preconditioner\n");
     printf("  nev            - Number of eigenvalues/eigenvectors to compute\n");
     printf("  seed           - (Optional) Random seed for reproducibility (e.g., 12345)\n");
+    printf("  verbose        - (Optional) Verbose output: 0=final only (default), 1=per-iteration details\n");
     return 1;
   }
   
@@ -116,6 +118,12 @@ int main(int argc, char *argv[]) {
     random_seed = (unsigned int) time(NULL);
   }
   srand(random_seed);
+  
+  /* Verbose output (default: 0) */
+  int verbose = 0;
+  if (argc >= 11) {
+    verbose = atoi(argv[10]);
+  }
   
   /* Validate matrix mode */
   int use_laplacian = 0;
@@ -164,6 +172,7 @@ int main(int argc, char *argv[]) {
   printf("  M (outer iter)    : %d\n", M);
   printf("  K (inner iter)    : %d\n", K);
   printf("  Random seed       : %u\n", random_seed);
+  printf("  Verbose           : %d\n", verbose);
   printf("======================================================\n\n");
   
   if (lobpcg_maxit > MAXIT) {
@@ -202,16 +211,19 @@ int main(int argc, char *argv[]) {
   d_X = (real_type *) mallocForDevice(d_X, A->n * nev, sizeof(real_type));
   d_d = (real_type *) mallocForDevice(d_d, A->n, sizeof(real_type));
   
-  /* Generate initial guess on host and copy to device */
-  real_type *h_X = (real_type *) calloc(A->n * nev, sizeof(real_type));
+  /* Generate initial guess */
   if (use_laplacian) {
     /* For Laplacian, first column is constant vector (eigenvector for lambda=0) */
+    /* Generate on host and copy to device */
+    real_type *h_X = (real_type *) calloc(A->n * nev, sizeof(real_type));
     generate_laplacian_initial_guess(A->n, nev, h_X);
+    memcpyDevice(d_X, h_X, A->n * nev, sizeof(real_type), "H2D");
+    free(h_X);
   } else {
-    generate_random_initial_guess(A->n, nev, h_X);
+    /* Generate random vectors directly on GPU using hiprand */
+    /* This matches CG_experiments behavior for reproducibility */
+    hip_generate_random_vectors(d_X, A->n, nev, (unsigned long long)random_seed);
   }
-  memcpyDevice(d_X, h_X, A->n * nev, sizeof(real_type), "H2D");
-  free(h_X);
   
   /* Copy diagonal to device - ensure non-zero for preconditioners */
   real_type *h_d = (real_type *) calloc(A->n, sizeof(real_type));
@@ -422,7 +434,8 @@ int main(int argc, char *argv[]) {
          lobpcg_maxit,
          &it,
          &nconv,
-         res_history);
+         res_history,
+         verbose);
   gettimeofday(&t2, 0);
   time_LOBPCG = (1000000.0 * (t2.tv_sec - t1.tv_sec) + t2.tv_usec - t1.tv_usec) / 1000.0;
   
@@ -433,6 +446,7 @@ int main(int argc, char *argv[]) {
   printf("  Iterations        : %d\n", it);
   printf("  Converged         : %d / %d\n", nconv, nev);
   printf("  Time (seconds)    : %2.4f\n", time_LOBPCG / 1000.0);
+  printf("  Mode              : %s\n", use_laplacian ? "laplacian" : "normal");
   printf("  Preconditioner    : %s\n", prec_data->prec_op);
   printf("\nComputed Eigenvalues:\n");
   for (int i = 0; i < nev; ++i) {

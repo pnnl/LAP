@@ -15,8 +15,13 @@
 #include "devMem.h"
 #endif
 
-/* Small constant for numerical stability */
-#define LOBPCG_EPS 1e-8
+#if HIP
+/* HIP-specific functions */
+extern void hip_generate_random_vectors(real_type *d_vec, int64_t n, int nev, unsigned long long seed);
+#endif
+
+/* Small constant for numerical stability (must match CG_experiments: 1e-14) */
+#define LOBPCG_EPS 1e-14
 
 /* Uncomment to enable eigenvalue/eigenvector verification at the end of LOBPCG */
 /* #define LOBPCG_VERIFY */
@@ -197,24 +202,24 @@ void cgs2_with_workspace(int n, int k, real_type *V, cgs2_workspace *ws) {
     
 #if (CUDA || HIP)
     /* 
-     * CGS2 block orthogonalization:
+     * CGS2 using GEMV (like CG_experiments):
      * a1 = V(:,1:i-1)' * V(:,i)  -->  GEMV: a1 = Vprev^T * vi
      * V(:,i) = V(:,i) - V(:,1:i-1) * a1  -->  GEMV: vi = vi - Vprev * a1
      * a2 = V(:,1:i-1)' * V(:,i)  -->  reorthogonalize
      * V(:,i) = V(:,i) - V(:,1:i-1) * a2
      */
     
-    /* First pass: a1 = Vprev^T * vi */
-    gemm("T", "N", i, 1, n, &one, Vprev, n, vi, n, &zero, d_a1, i);
+    /* First pass: a1 = Vprev^T * vi (GEMV with transpose) */
+    gemv("T", n, i, &one, Vprev, n, vi, &zero, d_a1);
     
-    /* vi = vi - Vprev * a1 */
-    gemm("N", "N", n, 1, i, &neg_one, Vprev, n, d_a1, i, &one, vi, n);
+    /* vi = vi - Vprev * a1 (GEMV without transpose) */
+    gemv("N", n, i, &neg_one, Vprev, n, d_a1, &one, vi);
     
     /* Second pass (reorthogonalization): a2 = Vprev^T * vi */
-    gemm("T", "N", i, 1, n, &one, Vprev, n, vi, n, &zero, d_a2, i);
+    gemv("T", n, i, &one, Vprev, n, vi, &zero, d_a2);
     
     /* vi = vi - Vprev * a2 */
-    gemm("N", "N", n, 1, i, &neg_one, Vprev, n, d_a2, i, &one, vi, n);
+    gemv("N", n, i, &neg_one, Vprev, n, d_a2, &one, vi);
     
 #else
     /* CPU version using GEMM */
@@ -237,10 +242,18 @@ void cgs2_with_workspace(int n, int k, real_type *V, cgs2_workspace *ws) {
     if (nrm > LOBPCG_EPS) {
       scal(n, 1.0 / nrm, vi);
     } else {
-      /* Vector is nearly zero after orthogonalization - set to small random vector */
-      /* This prevents numerical issues with zero columns */
+      /* Vector is nearly zero after orthogonalization */
+      /* Set to a small canonical vector to avoid numerical issues */
+#if (CUDA || HIP)
+      /* For GPU: use a small buffer and copy */
+      real_type *h_canonical = (real_type*) calloc(n, sizeof(real_type));
+      h_canonical[i % n] = 1.0;
+      memcpyDevice(vi, h_canonical, n, sizeof(real_type), "H2D");
+      free(h_canonical);
+#else
       vec_set(n, 0.0, vi);
-      vi[i % n] = 1.0;  /* Set one element to 1 to avoid zero vector */
+      vi[i % n] = 1.0;
+#endif
     }
   }
 }
@@ -424,7 +437,8 @@ void lobpcg(int n,
             int maxit,
             int *it,
             int *nconv,
-            real_type *res_history) {
+            real_type *res_history,
+            int verbose) {
   
   real_type one = 1.0;
   real_type zero = 0.0;
@@ -475,6 +489,11 @@ void lobpcg(int n,
   d_Pnew = (real_type*) mallocForDevice(d_Pnew, n * nev, sizeof(real_type));
   d_temp = (real_type*) mallocForDevice(d_temp, n * nev, sizeof(real_type));
   
+  /* Pre-allocate device buffers for Rayleigh-Ritz matrices (GEMM optimization) */
+  real_type *d_AS_rr, *d_BS_rr;
+  d_AS_rr = (real_type*) mallocForDevice(d_AS_rr, max_subspace * max_subspace, sizeof(real_type));
+  d_BS_rr = (real_type*) mallocForDevice(d_BS_rr, max_subspace * max_subspace, sizeof(real_type));
+  
   /* Zero out P initially */
   vec_zero(n * nev, d_P);
   
@@ -514,6 +533,16 @@ void lobpcg(int n,
   d_Y_small = (real_type*) mallocForDevice(d_Y_small, max_subspace * nev, sizeof(real_type));
 #endif
 
+  /* Pre-allocate lock coefficient buffers (for orthogonalization against locked vectors) */
+  /* Size: n_locked * max_subspace (at most nev * 3*nev) */
+  real_type *h_lock_coeff = (real_type*) malloc(nev * max_subspace * sizeof(real_type));
+#if (CUDA || HIP)
+  real_type *d_lock_coeff;
+  d_lock_coeff = (real_type*) mallocForDevice(d_lock_coeff, nev * max_subspace, sizeof(real_type));
+#else
+  real_type *lock_coeff = h_lock_coeff;  /* Alias for CPU version */
+#endif
+
   /* Initial orthonormalization using CGS2 */
   cgs2_with_workspace(n, k, X, cgs2_ws);
   
@@ -522,7 +551,10 @@ void lobpcg(int n,
     k_active = k - n_locked;
     
     if (k_active <= 0) {
-      printf("LOBPCG: All eigenpairs converged at iteration %d\n", iter);
+      if (verbose) {
+        printf("========================================\n");
+        printf("LOBPCG: All eigenpairs converged at iteration %d\n", iter);
+      }
       break;
     }
     
@@ -591,7 +623,14 @@ void lobpcg(int n,
     for (int i = 0; i < k_active; ++i) {
       if (h_res_norms[i] > max_res) max_res = h_res_norms[i];
     }
-    printf("LOBPCG: it %4d  max_res=%.8e  lambda[0]=%.8e\n", iter, max_res, h_lambda[0]);
+    
+    if (verbose) {
+      printf("it %4d  max residual = %.3e\n", iter, max_res);
+      for (int i = 0; i < k_active; ++i) {
+        printf("  eigenvalue %d: %.10e  residual: %.3e\n", 
+               n_locked + i + 1, h_lambda[i], h_res_norms[i]);
+      }
+    }
     
     
     if (res_history != NULL) {
@@ -604,11 +643,28 @@ void lobpcg(int n,
     /* Lock converged eigenpairs      */
     /* ------------------------------ */
     /* Use absolute residual for convergence (like MATLAB: locked = res < tol) */
+    /* Also check that eigenvector has unit norm (not collapsed to zero) */
     int any_locked = 0;
     for (int i = 0; i < k_active; ++i) {
-      locked[i] = (h_res_norms[i] < tol) ? 1 : 0;
-      if (locked[i]) {
-        any_locked = 1;
+      locked[i] = 0;  /* Default: not locked */
+      
+      /* Check residual is below tolerance */
+      if (h_res_norms[i] < tol) {
+        /* Verify the eigenvector has approximately unit norm (since we orthonormalize) */
+        /* After CGS2, norm should be ~1. If norm << 1, eigenvector has collapsed. */
+        real_type x_nrm = nrm2(n, X + i * n);
+        
+        if (x_nrm > 0.5) {
+          /* Valid convergence - eigenvector has reasonable norm */
+          locked[i] = 1;
+          any_locked = 1;
+        } else {
+          /* Eigenvector collapsed - don't lock */
+          if (verbose) {
+            printf("  ** Warning: eigenpair %d has degenerate eigenvector (norm=%.2e), skipping lock\n",
+                   n_locked + i + 1, x_nrm);
+          }
+        }
       }
     }
     
@@ -620,15 +676,20 @@ void lobpcg(int n,
           /* Copy to locked storage with correct column index */
           vec_copy(n, X + i * n, X_lock + n_locked * n);
           lambda[n_locked] = h_lambda[i];
-          printf("LOBPCG:   Eigenpair %d converged at iter %d, lambda = %.8e, res = %.8e\n", 
-                 n_locked + 1, iter, h_lambda[i], h_res_norms[i]);
+          if (verbose) {
+            printf("  ** Eigenpair %d converged at iter %d, lambda = %.10e, residual = %.3e\n", 
+                   n_locked + 1, iter, h_lambda[i], h_res_norms[i]);
+          }
           n_locked++;
         }
       }
       
       /* Check if all converged */
       if (n_locked >= nev) {
-        printf("LOBPCG: All %d eigenpairs converged\n", nev);
+        if (verbose) {
+          printf("========================================\n");
+          printf("LOBPCG: All %d eigenpairs converged at iteration %d\n", nev, iter);
+        }
         break;
       }
       
@@ -652,7 +713,10 @@ void lobpcg(int n,
       k_active = write_idx;
       
       if (k_active <= 0) {
-        printf("LOBPCG: All eigenpairs converged after compaction\n");
+        if (verbose) {
+          printf("========================================\n");
+          printf("LOBPCG: All eigenpairs converged after compaction\n");
+        }
         break;
       }
     }
@@ -669,15 +733,11 @@ void lobpcg(int n,
     
     /* Orthogonalize W and P against locked vectors (like MATLAB lines 64-67) */
     /* This is critical for stability when eigenpairs are locked */
+    /* Uses pre-allocated buffers (d_lock_coeff/lock_coeff) */
     if (n_locked > 0) {
       real_type one_orth = 1.0, zero_orth = 0.0, neg_one_orth = -1.0;
       /* W = W - X_lock * (X_lock' * W) */
 #if (CUDA || HIP)
-      /* Need temporary buffer for n_locked x k_active coefficients */
-      real_type *h_lock_coeff = (real_type*) malloc(n_locked * k_active * sizeof(real_type));
-      real_type *d_lock_coeff;
-      d_lock_coeff = (real_type*) mallocForDevice(d_lock_coeff, n_locked * k_active, sizeof(real_type));
-      
       gemm("T", "N", n_locked, k_active, n, &one_orth, X_lock, n, W, n, &zero_orth, d_lock_coeff, n_locked);
       gemm("N", "N", n, k_active, n_locked, &neg_one_orth, X_lock, n, d_lock_coeff, n_locked, &one_orth, W, n);
       
@@ -686,12 +746,7 @@ void lobpcg(int n,
         gemm("T", "N", n_locked, k_active, n, &one_orth, X_lock, n, P, n, &zero_orth, d_lock_coeff, n_locked);
         gemm("N", "N", n, k_active, n_locked, &neg_one_orth, X_lock, n, d_lock_coeff, n_locked, &one_orth, P, n);
       }
-      
-      freeDevice(d_lock_coeff);
-      free(h_lock_coeff);
 #else
-      real_type *lock_coeff = (real_type*) malloc(n_locked * k_active * sizeof(real_type));
-      
       gemm("T", "N", n_locked, k_active, n, &one_orth, X_lock, n, W, n, &zero_orth, lock_coeff, n_locked);
       gemm("N", "N", n, k_active, n_locked, &neg_one_orth, X_lock, n, lock_coeff, n_locked, &one_orth, W, n);
       
@@ -699,8 +754,6 @@ void lobpcg(int n,
         gemm("T", "N", n_locked, k_active, n, &one_orth, X_lock, n, P, n, &zero_orth, lock_coeff, n_locked);
         gemm("N", "N", n, k_active, n_locked, &neg_one_orth, X_lock, n, lock_coeff, n_locked, &one_orth, P, n);
       }
-      
-      free(lock_coeff);
 #endif
     }
     
@@ -786,13 +839,24 @@ void lobpcg(int n,
     
     /* ------------------------------ */
     /* Compute Rayleigh-Ritz matrices: G = S'*AS, B = S'*S */
+    /* Always use GEMM for efficiency */
     /* ------------------------------ */
-    for (int i = 0; i < ssize; ++i) {
-      for (int j = 0; j < ssize; ++j) {
-        h_AS[i + j * ssize] = dot(n, S + i * n, AS_temp + j * n);
-        h_BS[i + j * ssize] = dot(n, S + i * n, S + j * n);
-      }
+#if (CUDA || HIP)
+    {
+      real_type one_rr = 1.0, zero_rr = 0.0;
+      gemm("T", "N", ssize, ssize, n, &one_rr, S, n, AS_temp, n, &zero_rr, d_AS_rr, ssize);
+      gemm("T", "N", ssize, ssize, n, &one_rr, S, n, S, n, &zero_rr, d_BS_rr, ssize);
+      memcpyDevice(h_AS, d_AS_rr, ssize * ssize, sizeof(real_type), "D2H");
+      memcpyDevice(h_BS, d_BS_rr, ssize * ssize, sizeof(real_type), "D2H");
     }
+#else
+    {
+      real_type one_rr = 1.0, zero_rr = 0.0;
+      /* CPU: always use GEMM */
+      gemm("T", "N", ssize, ssize, n, &one_rr, S, n, AS_temp, n, &zero_rr, h_AS, ssize);
+      gemm("T", "N", ssize, ssize, n, &one_rr, S, n, S, n, &zero_rr, h_BS, ssize);
+    }
+#endif
     
     /* Symmetrize G and B */
     for (int i = 0; i < ssize; ++i) {
@@ -827,12 +891,21 @@ void lobpcg(int n,
       /* Recompute AS and BS without P */
       csr_matmat(n, ssize, nnz, ia, ja, a, S, AS_temp, 1.0, 0.0);
       
-      for (int i = 0; i < ssize; ++i) {
-        for (int j = 0; j < ssize; ++j) {
-          h_AS[i + j * ssize] = dot(n, S + i * n, AS_temp + j * n);
-          h_BS[i + j * ssize] = dot(n, S + i * n, S + j * n);
-        }
+#if (CUDA || HIP)
+      {
+        real_type one_rr = 1.0, zero_rr = 0.0;
+        gemm("T", "N", ssize, ssize, n, &one_rr, S, n, AS_temp, n, &zero_rr, d_AS_rr, ssize);
+        gemm("T", "N", ssize, ssize, n, &one_rr, S, n, S, n, &zero_rr, d_BS_rr, ssize);
+        memcpyDevice(h_AS, d_AS_rr, ssize * ssize, sizeof(real_type), "D2H");
+        memcpyDevice(h_BS, d_BS_rr, ssize * ssize, sizeof(real_type), "D2H");
       }
+#else
+      {
+        real_type one_rr = 1.0, zero_rr = 0.0;
+        gemm("T", "N", ssize, ssize, n, &one_rr, S, n, AS_temp, n, &zero_rr, h_AS, ssize);
+        gemm("T", "N", ssize, ssize, n, &one_rr, S, n, S, n, &zero_rr, h_BS, ssize);
+      }
+#endif
       
       for (int i = 0; i < ssize; ++i) {
         for (int j = i + 1; j < ssize; ++j) {
@@ -854,23 +927,43 @@ void lobpcg(int n,
     dsygv(ssize, h_AS, h_BS, h_theta, h_Y);
     
     /* ------------------------------ */
+    /* Sort eigenvalues and eigenvectors by ascending eigenvalue */
+    /* rocsolver_dsygv does NOT guarantee sorted output */
+    /* ------------------------------ */
+    {
+      /* Simple selection sort for small ssize (typically <= 15) */
+      for (int i = 0; i < ssize - 1; ++i) {
+        int min_idx = i;
+        for (int j = i + 1; j < ssize; ++j) {
+          if (h_theta[j] < h_theta[min_idx]) {
+            min_idx = j;
+          }
+        }
+        if (min_idx != i) {
+          /* Swap eigenvalues */
+          real_type tmp_theta = h_theta[i];
+          h_theta[i] = h_theta[min_idx];
+          h_theta[min_idx] = tmp_theta;
+          
+          /* Swap eigenvector columns in h_Y (column i and column min_idx) */
+          /* h_Y is stored column-major: column j is h_Y[j*ssize : (j+1)*ssize-1] */
+          for (int row = 0; row < ssize; ++row) {
+            real_type tmp_y = h_Y[i * ssize + row];
+            h_Y[i * ssize + row] = h_Y[min_idx * ssize + row];
+            h_Y[min_idx * ssize + row] = tmp_y;
+          }
+        }
+      }
+    }
+    
+    /* ------------------------------ */
     /* Sanity check: if eigenvalues are unreasonable, skip this update */
     /* This detects when the eigenvalue solver produced garbage */
     /* ------------------------------ */
     int skip_update = 0;
     
-    /* Check if smallest eigenvalue is negative (shouldn't happen for SPD) or too large */
-    /* For graph Laplacian, smallest eigenvalue should be near 0 */
-    /* Use the current lambda estimate as reference */
-    real_type lambda_ref = (h_lambda[0] > 0) ? h_lambda[0] : 1.0;
-    if (h_theta[0] < -1e-6 * lambda_ref || h_theta[0] > 1e6 * (lambda_ref + 1.0)) {
-      /* Eigenvalue solver likely failed - skip update, reset P */
-      skip_update = 1;
-      has_P = 0;
-    }
-    
-    /* Also check for NaN/Inf in eigenvalues */
-    for (int i = 0; i < k_active && !skip_update; ++i) {
+    /* Check for NaN/Inf in eigenvalues */
+    for (int i = 0; i < k_active; ++i) {
       if (h_theta[i] != h_theta[i] || h_theta[i] > 1e30 || h_theta[i] < -1e30) {
         skip_update = 1;
         has_P = 0;
@@ -996,6 +1089,7 @@ void lobpcg(int n,
   /* ------------------------------ */
   /* Combine locked + active eigenpairs */
   /* Copy remaining active eigenpairs to output */
+  /* For eigenpairs that haven't converged, use current h_lambda estimates */
   for (int i = 0; i < k - n_locked; ++i) {
     vec_copy(n, X + i * n, X + (n_locked + i) * n);
     lambda[n_locked + i] = h_lambda[i];
@@ -1123,6 +1217,8 @@ void lobpcg(int n,
   freeDevice(d_Xnew);
   freeDevice(d_Pnew);
   freeDevice(d_temp);
+  freeDevice(d_AS_rr);
+  freeDevice(d_BS_rr);
 #else
   free(AX);
   free(W);
@@ -1146,9 +1242,11 @@ void lobpcg(int n,
   free(locked);
   free(h_orth_coeff);
   free(h_Y_small);
+  free(h_lock_coeff);
   cgs2_workspace_free(cgs2_ws);
 #if (CUDA || HIP)
   freeDevice(d_orth_coeff);
   freeDevice(d_Y_small);
+  freeDevice(d_lock_coeff);
 #endif
 }

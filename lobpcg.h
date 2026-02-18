@@ -58,7 +58,8 @@ void lobpcg(int n,
             int maxit,         /* Maximum iterations */
             int *it,           /* Output: iterations performed */
             int *nconv,        /* Output: number of converged eigenpairs */
-            real_type *res_history /* Optional: residual history (maxit x nev) */
+            real_type *res_history, /* Optional: residual history (maxit x nev) */
+            int verbose        /* Verbose output: 0=final only, 1=per-iteration details */
            );
 
 /* CGS2 orthonormalization: orthonormalize columns of V in-place */

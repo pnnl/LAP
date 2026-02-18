@@ -147,4 +147,7 @@ real_type hip_nrm2(const int n, const real_type *v);
 
 /* Set vector elements to value - already declared as hip_vec_set */
 
+/* Generate random vectors on GPU using hiprand */
+void hip_generate_random_vectors(real_type *d_vec, int64_t n, int nev, unsigned long long seed);
+
 #endif

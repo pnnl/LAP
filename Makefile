@@ -128,7 +128,7 @@ else ifeq ($(BACKEND),hip)
     COMPILER     := $(HIPCC)
     HIP_FLAGS    := -D__HIP_PLATFORM_HCC__
     HIP_INCLUDES := -I$(ROCM_PATH)/include/rocblas -I$(ROCM_PATH)/include/rocsparse
-    HIP_LIBS     := -L$(ROCM_PATH)/lib -lrocsparse -lrocblas
+    HIP_LIBS     := -L$(ROCM_PATH)/lib -lrocsparse -lrocblas -lrocsolver -lhiprand
     
     BACKEND_OBJS := hip_blas.o devMem.o
     COMMON_OBJS  := simple_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o io_utils.o

@@ -1,8 +1,40 @@
 #include <rocsparse.h>
+#include <rocsparse/rocsparse-version.h>
 #include <rocblas.h>
+#include <rocsolver/rocsolver.h>
+#include <hiprand/hiprand.h>
 #include <hip/hip_runtime_api.h>
 #include <string.h>
 #include "hip_blas.h"
+
+// hiprand error checking
+#define HIPRAND_CHECK(call) \
+  do { \
+    hiprandStatus_t status = call; \
+    if (status != HIPRAND_STATUS_SUCCESS) { \
+      printf("hiprand error %d at %s:%d\n", status, __FILE__, __LINE__); \
+    } \
+  } while(0)
+
+// ROCm version compatibility macros
+// ROCm 6.0+ uses rocsparse 3.x with rocsparse_spmv
+// ROCm 7.x uses rocsparse 4.x (rocsparse_spmv deprecated but still available)
+#define ROCSPARSE_VERSION_CODE(major, minor) ((major) * 100 + (minor))
+#define ROCSPARSE_VERSION_CURRENT ROCSPARSE_VERSION_CODE(ROCSPARSE_VERSION_MAJOR, ROCSPARSE_VERSION_MINOR)
+#define ROCSPARSE_VERSION_3_0 ROCSPARSE_VERSION_CODE(3, 0)  // ROCm 6.0 = rocsparse 3.0
+
+// Use modern SpMV API if rocsparse >= 3.0 (ROCm 6.0+)
+#if ROCSPARSE_VERSION_CURRENT >= ROCSPARSE_VERSION_3_0
+#define USE_MODERN_SPMV 1
+#else
+#define USE_MODERN_SPMV 0
+#endif
+
+// Suppress deprecation warnings for rocsparse_spmv in ROCm 7.x
+#if ROCSPARSE_VERSION_CURRENT >= ROCSPARSE_VERSION_CODE(4, 0)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 
 // Error checking macros
 #define HIP_CHECK(call) \
@@ -51,10 +83,30 @@ static rocsparse_mat_info infoA;
 static rocsparse_mat_descr descrLic, descrLtic, descrM; //ICHOL
 static rocsparse_mat_info infoM; //ICHOL
 
+#if USE_MODERN_SPMV
+// Modern SpMV API structures (rocsparse 3.0+ / ROCm 6.0+)
+static rocsparse_spmat_descr spmat_A = NULL;
+static rocsparse_dnvec_descr dnvec_x = NULL;
+static rocsparse_dnvec_descr dnvec_y = NULL;
+static void *spmv_buffer = NULL;
+static size_t spmv_buffer_size = 0;
+static int spmv_n = 0;  // Track matrix size for descriptor reuse
+#endif
+
+// GPU eigensolver buffers (pre-allocated for reuse)
+static real_type *d_eig_A = NULL;
+static real_type *d_eig_B = NULL;
+static real_type *d_eig_W = NULL;
+static real_type *d_eig_E = NULL;
+static rocblas_int *d_eig_info = NULL;
+static int eig_max_n = 0;  // Track max size allocated
+
 
 void initialize_handles() {
 
   ROCBLAS_CHECK(rocblas_create_handle(&handle_rocblas));
+  /* Disable atomics for deterministic results (parallel reductions can vary otherwise) */
+  ROCBLAS_CHECK(rocblas_set_atomics_mode(handle_rocblas, rocblas_atomics_not_allowed));
   ROCSPARSE_CHECK(rocsparse_create_handle(&handle_rocsparse));
 
   ROCSPARSE_CHECK(rocsparse_create_mat_descr(&(descrL)));
@@ -83,8 +135,79 @@ void analyze_spmv(const int n,
                   const real_type *x,
                   real_type *result,
                   char *option) {
-  /* no buffer in matvec */
+  /* Setup for main matrix A */
   if (strcmp(option, "A") == 0) {
+#if USE_MODERN_SPMV
+    /* Modern API: Create sparse matrix and dense vector descriptors */
+    if (spmat_A != NULL) {
+      rocsparse_destroy_spmat_descr(spmat_A);
+    }
+    ROCSPARSE_CHECK(rocsparse_create_csr_descr(&spmat_A,
+                                               n,
+                                               n,
+                                               nnz,
+                                               ia,
+                                               ja,
+                                               a,
+                                               rocsparse_indextype_i32,
+                                               rocsparse_indextype_i32,
+                                               rocsparse_index_base_zero,
+                                               rocsparse_datatype_f64_r));
+    
+    /* Create dense vector descriptors (will be updated with actual pointers during spmv) */
+    if (dnvec_x != NULL) {
+      rocsparse_destroy_dnvec_descr(dnvec_x);
+    }
+    if (dnvec_y != NULL) {
+      rocsparse_destroy_dnvec_descr(dnvec_y);
+    }
+    ROCSPARSE_CHECK(rocsparse_create_dnvec_descr(&dnvec_x,
+                                                  n,
+                                                  (void*)x,
+                                                  rocsparse_datatype_f64_r));
+    ROCSPARSE_CHECK(rocsparse_create_dnvec_descr(&dnvec_y,
+                                                  n,
+                                                  (void*)result,
+                                                  rocsparse_datatype_f64_r));
+    
+    /* Get buffer size for SpMV */
+    const real_type alpha = 1.0, beta = 0.0;
+    ROCSPARSE_CHECK(rocsparse_spmv(handle_rocsparse,
+                                   rocsparse_operation_none,
+                                   &alpha,
+                                   spmat_A,
+                                   dnvec_x,
+                                   &beta,
+                                   dnvec_y,
+                                   rocsparse_datatype_f64_r,
+                                   rocsparse_spmv_alg_default,
+                                   rocsparse_spmv_stage_buffer_size,
+                                   &spmv_buffer_size,
+                                   NULL));
+    
+    /* Allocate buffer */
+    if (spmv_buffer != NULL) {
+      HIP_CHECK(hipFree(spmv_buffer));
+    }
+    HIP_CHECK(hipMalloc(&spmv_buffer, spmv_buffer_size));
+    
+    /* Preprocess (analysis) */
+    ROCSPARSE_CHECK(rocsparse_spmv(handle_rocsparse,
+                                   rocsparse_operation_none,
+                                   &alpha,
+                                   spmat_A,
+                                   dnvec_x,
+                                   &beta,
+                                   dnvec_y,
+                                   rocsparse_datatype_f64_r,
+                                   rocsparse_spmv_alg_default,
+                                   rocsparse_spmv_stage_preprocess,
+                                   &spmv_buffer_size,
+                                   spmv_buffer));
+    
+    spmv_n = n;
+#else
+    /* Legacy API */
     ROCSPARSE_CHECK(rocsparse_dcsrmv_analysis(handle_rocsparse,
                                               rocsparse_operation_none,
                                               n,
@@ -95,6 +218,7 @@ void analyze_spmv(const int n,
                                               ia,
                                               ja,
                                               infoA));
+#endif
   }
 
   if (strcmp(option, "L") == 0) {
@@ -442,7 +566,6 @@ real_type hip_dot(const int n,
                   const real_type *w) {
   real_type sum;
 
-  HIP_CHECK(hipDeviceSynchronize());
   ROCBLAS_CHECK(rocblas_ddot(handle_rocblas,
                              n,
                              v,
@@ -450,7 +573,7 @@ real_type hip_dot(const int n,
                              w,
                              1,
                              &sum));
-  HIP_CHECK(hipDeviceSynchronize());
+  HIP_CHECK(hipDeviceSynchronize());  /* Sync needed to read result */
   return sum;
 }
 
@@ -462,7 +585,7 @@ void hip_scal(const int n,
                               &alpha,
                               v,
                               1));
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync needed - async execution */
 }
 
 void hip_axpy(const int n,
@@ -476,7 +599,7 @@ void hip_axpy(const int n,
                               1,
                               y,
                               1));
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync needed - async execution */
 }
 
 void hip_csr_matvec(const int n,
@@ -490,8 +613,26 @@ void hip_csr_matvec(const int n,
                     const real_type *bet,
                     const char *kind) {
   /* y = alpha * A * x + beta * y */
-  HIP_CHECK(hipDeviceSynchronize());
   if (strcmp(kind, "A") == 0) {
+#if USE_MODERN_SPMV
+    /* Modern API: Update vector pointers and compute */
+    ROCSPARSE_CHECK(rocsparse_dnvec_set_values(dnvec_x, (void*)x));
+    ROCSPARSE_CHECK(rocsparse_dnvec_set_values(dnvec_y, (void*)result));
+    
+    ROCSPARSE_CHECK(rocsparse_spmv(handle_rocsparse,
+                                   rocsparse_operation_none,
+                                   al,
+                                   spmat_A,
+                                   dnvec_x,
+                                   bet,
+                                   dnvec_y,
+                                   rocsparse_datatype_f64_r,
+                                   rocsparse_spmv_alg_default,
+                                   rocsparse_spmv_stage_compute,
+                                   &spmv_buffer_size,
+                                   spmv_buffer));
+#else
+    /* Legacy API - no sync needed, async execution */
     ROCSPARSE_CHECK(rocsparse_dcsrmv(handle_rocsparse,
                                      rocsparse_operation_none,
                                      n,
@@ -506,9 +647,11 @@ void hip_csr_matvec(const int n,
                                      x,
                                      bet,
                                      result));
+#endif
   }
 
   if (strcmp(kind, "L") == 0) {
+    /* Legacy L matvec - no sync needed, async execution */
     ROCSPARSE_CHECK(rocsparse_dcsrmv(handle_rocsparse,
                                      rocsparse_operation_none,
                                      n,
@@ -526,6 +669,7 @@ void hip_csr_matvec(const int n,
   }
 
   if (strcmp(kind, "U") == 0) {
+    /* Legacy U matvec - no sync needed, async execution */
     ROCSPARSE_CHECK(rocsparse_dcsrmv(handle_rocsparse,
                                      rocsparse_operation_none,
                                      n,
@@ -541,7 +685,7 @@ void hip_csr_matvec(const int n,
                                      bet,
                                      result));
   }
-  HIP_CHECK(hipDeviceSynchronize());
+  /* Note: Modern SpMV API (kind "A") does not need sync here - async execution */
 }
 
 
@@ -575,6 +719,7 @@ void hip_gemv(const char *T,
                               beta,
                               y,
                               1));
+  /* No sync needed - async execution */
 }
 
 
@@ -591,7 +736,6 @@ void hip_lower_triangular_solve(const int n,
   /* d_x3 = L^(-1)dx2 */
   real_type one = 1.0;
 
-  HIP_CHECK(hipDeviceSynchronize());
   ROCSPARSE_CHECK(rocsparse_dcsrsv_solve(handle_rocsparse,
                                          rocsparse_operation_none,
                                          n,
@@ -606,7 +750,7 @@ void hip_lower_triangular_solve(const int n,
                                          result,
                                          rocsparse_solve_policy_auto,
                                          L_buffer));
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync - async execution, next op will wait on stream */
 }
 
 void hip_upper_triangular_solve(const int n,
@@ -619,7 +763,6 @@ void hip_upper_triangular_solve(const int n,
                                 real_type *result) {
   /* compute result = U^{-1}x */
   real_type one = 1.0;
-  HIP_CHECK(hipDeviceSynchronize());
   ROCSPARSE_CHECK(rocsparse_dcsrsv_solve(handle_rocsparse,
                                          rocsparse_operation_none,
                                          n,
@@ -634,7 +777,7 @@ void hip_upper_triangular_solve(const int n,
                                          result,
                                          rocsparse_solve_policy_auto,
                                          U_buffer));
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync - async execution, next op will wait on stream */
 }
 
 /* not std blas but needed and embarassingly parallel */
@@ -646,7 +789,7 @@ void hip_vec_vec(const int n,
                  const real_type *y,
                  real_type *res) {
   hipLaunchKernelGGL(hip_vec_vec_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, x, y, res);
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync needed - async execution */
 }
 
 /* vector reciprocal computes 1./d */
@@ -655,7 +798,7 @@ void hip_vector_reciprocal(const int n,
                            const real_type *v,
                            real_type *res) {
   hipLaunchKernelGGL(hip_vec_reciprocal_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, v, res);
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync needed - async execution */
 }
 
 // vector sqrt takes an sqrt from each vector entry
@@ -664,14 +807,14 @@ void hip_vector_sqrt(const int n,
                      const real_type *v,
                      real_type *res) {
   hipLaunchKernelGGL(hip_vec_sqrt_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, v, res);
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync needed - async execution */
 }
 
 void hip_vec_copy(const int n,
                   const real_type *src,
                   real_type *dest) {
   HIP_CHECK(hipMemcpy(dest, src, sizeof(real_type) * n, hipMemcpyDeviceToDevice));
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync needed for D2D - async execution */
 }
 
 
@@ -679,13 +822,13 @@ void hip_vec_set(const int n,
                  real_type value,
                  real_type *vec) {
   hipLaunchKernelGGL(hip_vec_set_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, value, vec);
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync needed - async execution */
 }
 
 void hip_vec_zero(const int n,
                   real_type *vec) {
   hipLaunchKernelGGL(hip_vec_zero_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, vec);
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync needed - async execution */
 }
 
 void hip_gemm(const char *transA,
@@ -722,7 +865,7 @@ void hip_gemm(const char *transA,
                               beta,
                               C,
                               ldc));
-  HIP_CHECK(hipDeviceSynchronize());
+  /* No sync needed - async execution */
 }
 
 real_type hip_nrm2(const int n, const real_type *v) {
@@ -860,7 +1003,7 @@ void hip_dsyev(const int n,
 }
 
 /* Generalized symmetric eigenvalue problem: A*x = lambda*B*x */
-/* Host-side implementation for small dense matrices */
+/* GPU implementation using rocSOLVER */
 void hip_dsygv(const int n,
                real_type *A,
                real_type *B,
@@ -868,106 +1011,152 @@ void hip_dsygv(const int n,
                real_type *eigvecs) {
   /* A, B, w, eigvecs are assumed to be on HOST for dense eigenvalue problems */
   
-  real_type *Bcopy = (real_type*) malloc(n * n * sizeof(real_type));
-  real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
-  real_type *C = (real_type*) malloc(n * n * sizeof(real_type));
-  
-  for (int i = 0; i < n * n; ++i) {
-    Bcopy[i] = B[i];
-    Acopy[i] = A[i];
+  /* Allocate/reallocate device buffers if needed */
+  if (n > eig_max_n) {
+    if (d_eig_A != NULL) HIP_CHECK(hipFree(d_eig_A));
+    if (d_eig_B != NULL) HIP_CHECK(hipFree(d_eig_B));
+    if (d_eig_W != NULL) HIP_CHECK(hipFree(d_eig_W));
+    if (d_eig_E != NULL) HIP_CHECK(hipFree(d_eig_E));
+    if (d_eig_info != NULL) HIP_CHECK(hipFree(d_eig_info));
+    
+    HIP_CHECK(hipMalloc(&d_eig_A, n * n * sizeof(real_type)));
+    HIP_CHECK(hipMalloc(&d_eig_B, n * n * sizeof(real_type)));
+    HIP_CHECK(hipMalloc(&d_eig_W, n * sizeof(real_type)));
+    HIP_CHECK(hipMalloc(&d_eig_E, n * sizeof(real_type)));
+    HIP_CHECK(hipMalloc(&d_eig_info, sizeof(rocblas_int)));
+    eig_max_n = n;
   }
   
-  /* Compute condition estimate based on diagonal range */
+  /* Regularization for ill-conditioned B matrix */
   real_type min_diag = fabs(B[0]);
-  real_type max_diag = fabs(B[0]);
   real_type trace = 0.0;
   for (int i = 0; i < n; ++i) {
     real_type d = fabs(B[i + i * n]);
     trace += d;
     if (d < min_diag) min_diag = d;
-    if (d > max_diag) max_diag = d;
   }
   
-  /* Preemptive regularization if B appears ill-conditioned */
-  /* This is more robust than waiting for Cholesky to fail */
-  real_type cond_est = (min_diag > 1e-14) ? max_diag / min_diag : 1e14;
-  if (cond_est > 1e10 || min_diag < 1e-12) {
-    real_type reg = 1e-10 * (trace / n + 1.0);
-    if (min_diag < 1e-12) {
-      reg = 1e-8 * (trace / n + 1.0);  /* Stronger regularization for very small diagonals */
-    }
-    for (int i = 0; i < n; ++i) {
-      Bcopy[i + i * n] = B[i + i * n] + reg;
-    }
-  }
-  
-  /* Cholesky: B = L*L' */
-  int ret = hip_cholesky_host(n, Bcopy);
-  if (ret != 0) {
-    /* Cholesky failed - use progressive regularization */
+  /* Apply regularization if needed (modify host copy before upload) */
+  real_type *B_reg = NULL;
+  if (min_diag < 1e-12) {
+    B_reg = (real_type*) malloc(n * n * sizeof(real_type));
+    memcpy(B_reg, B, n * n * sizeof(real_type));
     real_type reg = 1e-8 * (trace / n + 1.0);
-    for (int attempt = 0; attempt < 5 && ret != 0; ++attempt) {
-      for (int i = 0; i < n; ++i) {
-        Bcopy[i + i * n] = B[i + i * n] + reg;
-      }
-      ret = hip_cholesky_host(n, Bcopy);
-      reg *= 10.0;  /* Increase regularization each attempt */
-    }
-    if (ret != 0) {
-      /* Last resort: very aggressive regularization */
-      for (int i = 0; i < n; ++i) {
-        Bcopy[i + i * n] = B[i + i * n] + 1e-4 * (trace / n + 1.0);
-      }
-      hip_cholesky_host(n, Bcopy);
-    }
-  }
-  
-  /* Compute C = L^{-1} * A */
-  for (int j = 0; j < n; ++j) {
     for (int i = 0; i < n; ++i) {
-      real_type sum = Acopy[i + j * n];
-      for (int k = 0; k < i; ++k) {
-        sum -= Bcopy[i + k * n] * C[k + j * n];
+      B_reg[i + i * n] += reg;
+    }
+  }
+  
+  /* Copy matrices to device */
+  HIP_CHECK(hipMemcpy(d_eig_A, A, n * n * sizeof(real_type), hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemcpy(d_eig_B, B_reg ? B_reg : B, n * n * sizeof(real_type), hipMemcpyHostToDevice));
+  
+  if (B_reg) free(B_reg);
+  
+  /* Call rocSOLVER dsygv */
+  /* itype = rocblas_eform_ax: A*x = lambda*B*x */
+  /* evect = rocblas_evect_original: compute eigenvectors */
+  /* uplo = rocblas_fill_upper: upper triangle stored */
+  rocblas_status status = rocsolver_dsygv(handle_rocblas,
+                                          rocblas_eform_ax,
+                                          rocblas_evect_original,
+                                          rocblas_fill_upper,
+                                          n,
+                                          d_eig_A,
+                                          n,
+                                          d_eig_B,
+                                          n,
+                                          d_eig_W,
+                                          d_eig_E,
+                                          d_eig_info);
+  
+  /* Check for errors */
+  rocblas_int h_info = 0;
+  HIP_CHECK(hipMemcpy(&h_info, d_eig_info, sizeof(rocblas_int), hipMemcpyDeviceToHost));
+  
+  if (status != rocblas_status_success || h_info != 0) {
+    /* rocSOLVER failed - fall back to CPU Jacobi */
+    real_type *Bcopy = (real_type*) malloc(n * n * sizeof(real_type));
+    real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
+    real_type *C = (real_type*) malloc(n * n * sizeof(real_type));
+    
+    memcpy(Bcopy, B, n * n * sizeof(real_type));
+    memcpy(Acopy, A, n * n * sizeof(real_type));
+    
+    /* Add regularization */
+    real_type reg = 1e-6 * (trace / n + 1.0);
+    for (int i = 0; i < n; ++i) {
+      Bcopy[i + i * n] += reg;
+    }
+    
+    hip_cholesky_host(n, Bcopy);
+    
+    for (int j = 0; j < n; ++j) {
+      for (int i = 0; i < n; ++i) {
+        real_type sum = Acopy[i + j * n];
+        for (int k = 0; k < i; ++k) {
+          sum -= Bcopy[i + k * n] * C[k + j * n];
+        }
+        C[i + j * n] = sum / Bcopy[i + i * n];
       }
-      C[i + j * n] = sum / Bcopy[i + i * n];
     }
-  }
-  
-  /* Compute Acopy = C * L^{-T} */
-  for (int j = 0; j < n; ++j) {
-    for (int i = n - 1; i >= 0; --i) {
-      real_type sum = C[j + i * n];
-      for (int k = i + 1; k < n; ++k) {
-        sum -= Bcopy[k + i * n] * Acopy[j + k * n];
+    
+    for (int j = 0; j < n; ++j) {
+      for (int i = n - 1; i >= 0; --i) {
+        real_type sum = C[j + i * n];
+        for (int kk = i + 1; kk < n; ++kk) {
+          sum -= Bcopy[kk + i * n] * Acopy[j + kk * n];
+        }
+        Acopy[j + i * n] = sum / Bcopy[i + i * n];
       }
-      Acopy[j + i * n] = sum / Bcopy[i + i * n];
     }
-  }
-  
-  /* Symmetrize */
-  for (int i = 0; i < n; ++i) {
-    for (int j = i + 1; j < n; ++j) {
-      real_type avg = 0.5 * (Acopy[i + j * n] + Acopy[j + i * n]);
-      Acopy[i + j * n] = avg;
-      Acopy[j + i * n] = avg;
-    }
-  }
-  
-  /* Solve standard eigenvalue problem */
-  hip_jacobi_eigen_host(n, Acopy, w, eigvecs);
-  
-  /* Back-transform eigenvectors: x = L^{-T} * y */
-  for (int k = 0; k < n; ++k) {
-    for (int i = n - 1; i >= 0; --i) {
-      real_type sum = eigvecs[i + k * n];
+    
+    for (int i = 0; i < n; ++i) {
       for (int j = i + 1; j < n; ++j) {
-        sum -= Bcopy[j + i * n] * eigvecs[j + k * n];
+        real_type avg = 0.5 * (Acopy[i + j * n] + Acopy[j + i * n]);
+        Acopy[i + j * n] = avg;
+        Acopy[j + i * n] = avg;
       }
-      eigvecs[i + k * n] = sum / Bcopy[i + i * n];
     }
+    
+    hip_jacobi_eigen_host(n, Acopy, w, eigvecs);
+    
+    for (int kk = 0; kk < n; ++kk) {
+      for (int i = n - 1; i >= 0; --i) {
+        real_type sum = eigvecs[i + kk * n];
+        for (int j = i + 1; j < n; ++j) {
+          sum -= Bcopy[j + i * n] * eigvecs[j + kk * n];
+        }
+        eigvecs[i + kk * n] = sum / Bcopy[i + i * n];
+      }
+    }
+    
+    free(Bcopy);
+    free(Acopy);
+    free(C);
+    return;
   }
   
-  free(Bcopy);
-  free(Acopy);
-  free(C);
+  /* Copy results back to host */
+  /* Eigenvectors are in d_eig_A (column-major), eigenvalues in d_eig_W */
+  HIP_CHECK(hipMemcpy(eigvecs, d_eig_A, n * n * sizeof(real_type), hipMemcpyDeviceToHost));
+  HIP_CHECK(hipMemcpy(w, d_eig_W, n * sizeof(real_type), hipMemcpyDeviceToHost));
+}
+
+/**
+ * Generate random vectors directly on GPU using hiprand
+ * This matches CG_experiments behavior for reproducibility
+ * d_vec: device pointer to n*nev doubles
+ * seed: random seed for reproducibility
+ */
+void hip_generate_random_vectors(real_type *d_vec, int64_t n, int nev, unsigned long long seed) {
+  hiprandGenerator_t gen;
+  HIPRAND_CHECK(hiprandCreateGenerator(&gen, HIPRAND_RNG_PSEUDO_DEFAULT));
+  HIPRAND_CHECK(hiprandSetPseudoRandomGeneratorSeed(gen, seed));
+  
+  /* Generate uniform doubles in [0, 1) - matches CG_experiments */
+  HIPRAND_CHECK(hiprandGenerateUniformDouble(gen, d_vec, n * nev));
+  
+  HIPRAND_CHECK(hiprandDestroyGenerator(gen));
+  HIP_CHECK(hipDeviceSynchronize());
 }
