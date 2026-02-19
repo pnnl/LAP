@@ -117,7 +117,7 @@ int main(int argc, char *argv[]) {
   } else {
     random_seed = (unsigned int) time(NULL);
   }
-  srand(random_seed);
+  /* Note: srand is called just before initial guess generation to ensure determinism */
   
   /* Verbose output (default: 0) */
   int verbose = 0;
@@ -212,6 +212,9 @@ int main(int argc, char *argv[]) {
   d_d = (real_type *) mallocForDevice(d_d, A->n, sizeof(real_type));
   
   /* Generate initial guess */
+  /* Seed random number generator here (after all library init) to ensure determinism */
+  srand(random_seed);
+  
   if (use_laplacian) {
     /* For Laplacian, first column is constant vector (eigenvector for lambda=0) */
     /* Generate on host and copy to device */
@@ -223,6 +226,14 @@ int main(int argc, char *argv[]) {
     /* Generate random vectors directly on GPU using hiprand */
     /* This matches CG_experiments behavior for reproducibility */
     hip_generate_random_vectors(d_X, A->n, nev, (unsigned long long)random_seed);
+    
+    /* Debug: verify random vectors are deterministic */
+    if (verbose) {
+      real_type h_check[5];
+      memcpyDevice(h_check, d_X, 5, sizeof(real_type), "D2H");
+      printf("Debug: First 5 random values: %.10f %.10f %.10f %.10f %.10f\n",
+             h_check[0], h_check[1], h_check[2], h_check[3], h_check[4]);
+    }
   }
   
   /* Copy diagonal to device - ensure non-zero for preconditioners */

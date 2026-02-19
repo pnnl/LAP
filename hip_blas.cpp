@@ -1151,10 +1151,11 @@ void hip_dsygv(const int n,
  */
 void hip_generate_random_vectors(real_type *d_vec, int64_t n, int nev, unsigned long long seed) {
   hiprandGenerator_t gen;
-  HIPRAND_CHECK(hiprandCreateGenerator(&gen, HIPRAND_RNG_PSEUDO_DEFAULT));
+  /* Use XORWOW for deterministic results (DEFAULT may vary between runs) */
+  HIPRAND_CHECK(hiprandCreateGenerator(&gen, HIPRAND_RNG_PSEUDO_XORWOW));
   HIPRAND_CHECK(hiprandSetPseudoRandomGeneratorSeed(gen, seed));
   
-  /* Generate uniform doubles in [0, 1) - matches CG_experiments */
+  /* Generate uniform doubles in [0, 1) */
   HIPRAND_CHECK(hiprandGenerateUniformDouble(gen, d_vec, n * nev));
   
   HIPRAND_CHECK(hiprandDestroyGenerator(gen));
