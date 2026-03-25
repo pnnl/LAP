@@ -6,7 +6,7 @@
  * Arguments:
  *   matrix.mtx    - Matrix file in Matrix Market format
  *   mode          - Matrix mode: "normal" (use matrix as-is) or "laplacian" (convert to graph Laplacian)
- *   preconditioner - Preconditioner type: "none", "it_jacobi", "line_jacobi", "GS_it", "GS_it2", "GS_std"
+ *   preconditioner - Preconditioner type: "none", "it_jacobi", "line_jacobi", "GS_it", "GS_it2", "GS_std", "ic0"
  *   tolerance     - Convergence tolerance for residual norm
  *   maxit         - Maximum number of LOBPCG iterations
  *   M             - Outer iterations for preconditioner
@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) {
     printf("Usage: %s <matrix.mtx> <mode> <preconditioner> <tolerance> <maxit> <M> <K> <nev> [seed] [verbose]\n", argv[0]);
     printf("  matrix.mtx     - Matrix file in Matrix Market format\n");
     printf("  mode           - Matrix mode: 'normal' or 'laplacian'\n");
-    printf("  preconditioner - Preconditioner type: none, it_jacobi, line_jacobi, GS_it, GS_it2, GS_std\n");
+    printf("  preconditioner - Preconditioner type: none, it_jacobi, line_jacobi, GS_it, GS_it2, GS_std, ic0\n");
     printf("  tolerance      - Convergence tolerance (e.g., 1e-8)\n");
     printf("  maxit          - Maximum LOBPCG iterations\n");
     printf("  M              - Outer iterations for preconditioner\n");
@@ -134,6 +134,33 @@ int main(int argc, char *argv[]) {
     return 1;
   }
   
+  /* Validate and normalize preconditioner name */
+  /* Supported: none, it_jacobi, line_jacobi, GS_it, GS_it2, GS_std, ichol, ic0 */
+  const char *validPrecs[] = {"none", "it_jacobi", "line_jacobi", "GS_it", "GS_it2", "GS_std", "ichol", "ic0"};
+  int numValidPrecs = 8;
+  int precValid = 0;
+  for (int i = 0; i < numValidPrecs; i++) {
+    if (strcmp(precName, validPrecs[i]) == 0) {
+      precValid = 1;
+      break;
+    }
+  }
+  if (!precValid) {
+    printf("Warning: Unrecognized preconditioner '%s'. Setting to 'none'.\n", precName);
+    precName = "none";
+  }
+  
+  /* Normalize ic0 to ichol (they are the same: incomplete Cholesky with zero fill-in) */
+  if (strcmp(precName, "ic0") == 0) {
+    precName = "ichol";
+  }
+  
+  /* ic0/ichol only works with normal mode (not laplacian) */
+  if (strcmp(precName, "ichol") == 0 && use_laplacian) {
+    printf("Warning: ichol/ic0 preconditioner is not compatible with laplacian mode. Setting to 'none'.\n");
+    precName = "none";
+  }
+  
   /* Read and setup matrix */
   mmatrix *A, *L, *U, *D;
   A = (mmatrix *) calloc(1, sizeof(mmatrix));
@@ -174,6 +201,7 @@ int main(int argc, char *argv[]) {
   printf("  Random seed       : %u\n", random_seed);
   printf("  Verbose           : %d\n", verbose);
   printf("======================================================\n\n");
+  fflush(stdout);  /* Ensure header is printed before any HIP operations */
   
   if (lobpcg_maxit > MAXIT) {
     printf("  [WARNING] maxit cannot be larger than %d, resetting to MAX\n", MAXIT);
@@ -303,21 +331,43 @@ int main(int argc, char *argv[]) {
   prec_data->lnnz = L->nnz;
   prec_data->unnz = U->nnz;
   
-  prec_data->lia = (int *) mallocForDevice(prec_data->lia, A->n + 1, sizeof(int));
-  prec_data->lja = (int *) mallocForDevice(prec_data->lja, L->nnz, sizeof(int));
-  prec_data->la = (real_type *) mallocForDevice(prec_data->la, L->nnz, sizeof(real_type));
+  /* Only allocate L and U matrices if preconditioner needs them */
+  /* "none" preconditioner doesn't need L/U, saving memory for large matrices */
+  int needs_LU = (strcmp(precName, "none") != 0);
   
-  prec_data->uia = (int *) mallocForDevice(prec_data->uia, A->n + 1, sizeof(int));
-  prec_data->uja = (int *) mallocForDevice(prec_data->uja, U->nnz, sizeof(int));
-  prec_data->ua = (real_type *) mallocForDevice(prec_data->ua, U->nnz, sizeof(real_type));
-  
-  memcpyDevice(prec_data->lia, L->csr_ia, A->n + 1, sizeof(int), "H2D");
-  memcpyDevice(prec_data->lja, L->csr_ja, L->nnz, sizeof(int), "H2D");
-  memcpyDevice(prec_data->la, L->csr_vals, L->nnz, sizeof(real_type), "H2D");
-  
-  memcpyDevice(prec_data->uia, U->csr_ia, A->n + 1, sizeof(int), "H2D");
-  memcpyDevice(prec_data->uja, U->csr_ja, U->nnz, sizeof(int), "H2D");
-  memcpyDevice(prec_data->ua, U->csr_vals, U->nnz, sizeof(real_type), "H2D");
+  if (needs_LU) {
+    /* Allocate L and U matrices on device (guard against zero nnz) */
+    int l_nnz = (L->nnz > 0) ? L->nnz : 1;
+    int u_nnz = (U->nnz > 0) ? U->nnz : 1;
+    
+    prec_data->lia = (int *) mallocForDevice(prec_data->lia, A->n + 1, sizeof(int));
+    prec_data->lja = (int *) mallocForDevice(prec_data->lja, l_nnz, sizeof(int));
+    prec_data->la = (real_type *) mallocForDevice(prec_data->la, l_nnz, sizeof(real_type));
+    
+    prec_data->uia = (int *) mallocForDevice(prec_data->uia, A->n + 1, sizeof(int));
+    prec_data->uja = (int *) mallocForDevice(prec_data->uja, u_nnz, sizeof(int));
+    prec_data->ua = (real_type *) mallocForDevice(prec_data->ua, u_nnz, sizeof(real_type));
+    
+    memcpyDevice(prec_data->lia, L->csr_ia, A->n + 1, sizeof(int), "H2D");
+    if (L->nnz > 0) {
+      memcpyDevice(prec_data->lja, L->csr_ja, L->nnz, sizeof(int), "H2D");
+      memcpyDevice(prec_data->la, L->csr_vals, L->nnz, sizeof(real_type), "H2D");
+    }
+    
+    memcpyDevice(prec_data->uia, U->csr_ia, A->n + 1, sizeof(int), "H2D");
+    if (U->nnz > 0) {
+      memcpyDevice(prec_data->uja, U->csr_ja, U->nnz, sizeof(int), "H2D");
+      memcpyDevice(prec_data->ua, U->csr_vals, U->nnz, sizeof(real_type), "H2D");
+    }
+  } else {
+    /* Set to NULL for "none" preconditioner */
+    prec_data->lia = NULL;
+    prec_data->lja = NULL;
+    prec_data->la = NULL;
+    prec_data->uia = NULL;
+    prec_data->uja = NULL;
+    prec_data->ua = NULL;
+  }
   
   prec_data->d_r = (real_type *) mallocForDevice(prec_data->d_r, A->n, sizeof(real_type));
   vector_reciprocal(A->n, d_d, prec_data->d_r);

@@ -813,6 +813,9 @@ void hip_vector_sqrt(const int n,
 void hip_vec_copy(const int n,
                   const real_type *src,
                   real_type *dest) {
+  if (n <= 0 || src == NULL || dest == NULL) {
+    return;
+  }
   HIP_CHECK(hipMemcpy(dest, src, sizeof(real_type) * n, hipMemcpyDeviceToDevice));
   /* No sync needed for D2D - async execution */
 }

@@ -453,6 +453,16 @@ void lobpcg(int n,
   /* Workspace allocation */
   int max_subspace = 3 * nev;
   
+  /* Estimate memory requirements */
+  size_t mem_per_vec = (size_t)n * sizeof(real_type);
+  size_t mem_subspace = (size_t)n * max_subspace * sizeof(real_type);
+  size_t mem_total = mem_per_vec * (7 * nev)  /* X, AX, W, P, R, Xnew, Pnew, X_lock */
+                   + mem_subspace * 2;        /* S, AS_temp */
+  
+  printf("LOBPCG: Estimated GPU memory requirement: %.2f GB\n", 
+         (double)mem_total / (1024.0 * 1024.0 * 1024.0));
+  fflush(stdout);
+  
   /* Host arrays for small dense operations */
   real_type *h_AS = (real_type*) calloc(max_subspace * max_subspace, sizeof(real_type));
   real_type *h_BS = (real_type*) calloc(max_subspace * max_subspace, sizeof(real_type));
@@ -488,6 +498,20 @@ void lobpcg(int n,
   d_Xnew = (real_type*) mallocForDevice(d_Xnew, n * nev, sizeof(real_type));
   d_Pnew = (real_type*) mallocForDevice(d_Pnew, n * nev, sizeof(real_type));
   d_temp = (real_type*) mallocForDevice(d_temp, n * nev, sizeof(real_type));
+  
+  /* Check for allocation failures */
+  if (d_AX == NULL || d_W == NULL || d_P == NULL || d_R == NULL || 
+      d_X_lock == NULL || d_S == NULL || d_AS_temp == NULL ||
+      d_Xnew == NULL || d_Pnew == NULL || d_temp == NULL) {
+    fprintf(stderr, "ERROR: LOBPCG failed to allocate device memory.\n");
+    fprintf(stderr, "       Required: %.2f GB for matrix of size %d with %d eigenvalues.\n",
+            (double)((size_t)n * (7 * nev + 2 * max_subspace) * sizeof(real_type)) / (1024.0 * 1024.0 * 1024.0),
+            n, nev);
+    fprintf(stderr, "       Try reducing the number of eigenvalues (nev) or use a smaller matrix.\n");
+    *nconv = 0;
+    *it = 0;
+    return;
+  }
   
   /* Pre-allocate device buffers for Rayleigh-Ritz matrices (GEMM optimization) */
   real_type *d_AS_rr, *d_BS_rr;
