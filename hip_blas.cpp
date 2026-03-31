@@ -1,11 +1,75 @@
 #include <rocsparse.h>
+#include <rocsparse/rocsparse-version.h>
 #include <rocblas.h>
+#include <rocsolver/rocsolver.h>
+#include <hiprand/hiprand.h>
 #include <hip/hip_runtime_api.h>
+#include <string.h>
 #include "hip_blas.h"
+
+// hiprand error checking
+#define HIPRAND_CHECK(call) \
+  do { \
+    hiprandStatus_t status = call; \
+    if (status != HIPRAND_STATUS_SUCCESS) { \
+      printf("hiprand error %d at %s:%d\n", status, __FILE__, __LINE__); \
+    } \
+  } while(0)
+
+// ROCm version compatibility macros
+// ROCm 6.0+ uses rocsparse 3.x with rocsparse_spmv
+// ROCm 7.x uses rocsparse 4.x (rocsparse_spmv deprecated but still available)
+#define ROCSPARSE_VERSION_CODE(major, minor) ((major) * 100 + (minor))
+#define ROCSPARSE_VERSION_CURRENT ROCSPARSE_VERSION_CODE(ROCSPARSE_VERSION_MAJOR, ROCSPARSE_VERSION_MINOR)
+#define ROCSPARSE_VERSION_3_0 ROCSPARSE_VERSION_CODE(3, 0)  // ROCm 6.0 = rocsparse 3.0
+
+// Use modern SpMV API if rocsparse >= 3.0 (ROCm 6.0+)
+#if ROCSPARSE_VERSION_CURRENT >= ROCSPARSE_VERSION_3_0
+#define USE_MODERN_SPMV 1
+#else
+#define USE_MODERN_SPMV 0
+#endif
+
+// Suppress deprecation warnings for rocsparse_spmv in ROCm 7.x
+#if ROCSPARSE_VERSION_CURRENT >= ROCSPARSE_VERSION_CODE(4, 0)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
+// Error checking macros
+#define HIP_CHECK(call) \
+  do { \
+    hipError_t err = call; \
+    if (err != hipSuccess) { \
+      fprintf(stderr, "HIP error in %s at line %d: %s\n", \
+              __FILE__, __LINE__, hipGetErrorString(err)); \
+      exit(EXIT_FAILURE); \
+    } \
+  } while(0)
+
+#define ROCBLAS_CHECK(call) \
+  do { \
+    rocblas_status status = call; \
+    if (status != rocblas_status_success) { \
+      fprintf(stderr, "rocBLAS error in %s at line %d: %d\n", \
+              __FILE__, __LINE__, status); \
+      exit(EXIT_FAILURE); \
+    } \
+  } while(0)
+
+#define ROCSPARSE_CHECK(call) \
+  do { \
+    rocsparse_status status = call; \
+    if (status != rocsparse_status_success) { \
+      fprintf(stderr, "rocSPARSE error in %s at line %d: %d\n", \
+              __FILE__, __LINE__, status); \
+      exit(EXIT_FAILURE); \
+    } \
+  } while(0)
 
 
 static rocblas_handle handle_rocblas;
-static  rocsparse_handle  handle_rocsparse;
+static rocsparse_handle handle_rocsparse;
 static void *mv_buffer = NULL;
 static void *L_buffer;
 static void *U_buffer;
@@ -14,131 +78,211 @@ static void *ichol_buffer;
 static rocsparse_mat_descr matA = NULL;
 static rocsparse_mat_descr descrL, descrU, descrA;
 static rocsparse_mat_descr descrLt; //for ICHOL
-static rocsparse_mat_info  infoL, infoU, infoLic, infoLtic;
-static rocsparse_mat_info  infoA;
+static rocsparse_mat_info infoL, infoU, infoLic, infoLtic;
+static rocsparse_mat_info infoA;
 static rocsparse_mat_descr descrLic, descrLtic, descrM; //ICHOL
 static rocsparse_mat_info infoM; //ICHOL
 
+#if USE_MODERN_SPMV
+// Modern SpMV API structures (rocsparse 3.0+ / ROCm 6.0+)
+static rocsparse_spmat_descr spmat_A = NULL;
+static rocsparse_dnvec_descr dnvec_x = NULL;
+static rocsparse_dnvec_descr dnvec_y = NULL;
+static void *spmv_buffer = NULL;
+static size_t spmv_buffer_size = 0;
+static int spmv_n = 0;  // Track matrix size for descriptor reuse
+#endif
 
-void initialize_handles(){
+// GPU eigensolver buffers (pre-allocated for reuse)
+static real_type *d_eig_A = NULL;
+static real_type *d_eig_B = NULL;
+static real_type *d_eig_W = NULL;
+static real_type *d_eig_E = NULL;
+static rocblas_int *d_eig_info = NULL;
+static int eig_max_n = 0;  // Track max size allocated
 
-  rocblas_create_handle(&handle_rocblas);
-  rocsparse_create_handle(&handle_rocsparse);
 
-  rocsparse_create_mat_descr(&(descrL));
-  rocsparse_set_mat_fill_mode(descrL, rocsparse_fill_mode_lower);
-  rocsparse_set_mat_index_base(descrL, rocsparse_index_base_zero);
+void initialize_handles() {
+  
+  // Explicitly initialize HIP device - required for batch jobs
+  int device_count = 0;
+  hipError_t hip_err = hipGetDeviceCount(&device_count);
+  if (hip_err != hipSuccess || device_count == 0) {
+    fprintf(stderr, "ERROR: No HIP devices available (count=%d, err=%d: %s)\n", 
+            device_count, hip_err, hipGetErrorString(hip_err));
+    fprintf(stderr, "Check ROCR_VISIBLE_DEVICES or HIP_VISIBLE_DEVICES environment variables\n");
+    exit(EXIT_FAILURE);
+  }
+  
+  // Select device 0 (first visible GPU)
+  HIP_CHECK(hipSetDevice(0));
+  
+  // Print device info for debugging
+  hipDeviceProp_t props;
+  HIP_CHECK(hipGetDeviceProperties(&props, 0));
+  printf("Using GPU: %s (device 0 of %d)\n", props.name, device_count);
+  fflush(stdout);
 
-  rocsparse_create_mat_descr(&(descrU));
-  rocsparse_set_mat_index_base(descrU, rocsparse_index_base_zero);
-  rocsparse_set_mat_fill_mode(descrU, rocsparse_fill_mode_upper);
+  ROCBLAS_CHECK(rocblas_create_handle(&handle_rocblas));
+  /* Disable atomics for deterministic results (parallel reductions can vary otherwise) */
+  ROCBLAS_CHECK(rocblas_set_atomics_mode(handle_rocblas, rocblas_atomics_not_allowed));
+  ROCSPARSE_CHECK(rocsparse_create_handle(&handle_rocsparse));
 
-  rocsparse_create_mat_descr(&(descrA));
-  rocsparse_set_mat_index_base(descrA, rocsparse_index_base_zero);
-  rocsparse_set_mat_type(descrA, rocsparse_matrix_type_general);
+  ROCSPARSE_CHECK(rocsparse_create_mat_descr(&(descrL)));
+  ROCSPARSE_CHECK(rocsparse_set_mat_fill_mode(descrL, rocsparse_fill_mode_lower));
+  ROCSPARSE_CHECK(rocsparse_set_mat_index_base(descrL, rocsparse_index_base_zero));
 
-  rocsparse_create_mat_info(&infoA);
-  rocsparse_create_mat_info(&infoL);
-  rocsparse_create_mat_info(&infoU);
-  hipDeviceSynchronize();
+  ROCSPARSE_CHECK(rocsparse_create_mat_descr(&(descrU)));
+  ROCSPARSE_CHECK(rocsparse_set_mat_index_base(descrU, rocsparse_index_base_zero));
+  ROCSPARSE_CHECK(rocsparse_set_mat_fill_mode(descrU, rocsparse_fill_mode_upper));
+
+  ROCSPARSE_CHECK(rocsparse_create_mat_descr(&(descrA)));
+  ROCSPARSE_CHECK(rocsparse_set_mat_index_base(descrA, rocsparse_index_base_zero));
+  ROCSPARSE_CHECK(rocsparse_set_mat_type(descrA, rocsparse_matrix_type_general));
+
+  ROCSPARSE_CHECK(rocsparse_create_mat_info(&infoA));
+  ROCSPARSE_CHECK(rocsparse_create_mat_info(&infoL));
+  ROCSPARSE_CHECK(rocsparse_create_mat_info(&infoU));
+  HIP_CHECK(hipDeviceSynchronize());
 }
 
-void analyze_spmv(const int n, 
-                  const int nnz, 
-                  int *ia, 
-                  int *ja, 
-                  real_type *a, 
-                  const real_type *x, 
+void analyze_spmv(const int n,
+                  const int nnz,
+                  int *ia,
+                  int *ja,
+                  real_type *a,
+                  const real_type *x,
                   real_type *result,
-                  char * option
-                 ){
-  /* no buffer in matvec */
-  rocsparse_status status_rocsparse;
+                  char *option) {
+  /* Setup for main matrix A */
   if (strcmp(option, "A") == 0) {
-    status_rocsparse = rocsparse_dcsrmv_analysis(handle_rocsparse,
-                                                 rocsparse_operation_none,
-                                                 n,
-                                                 n,
-                                                 nnz,
-                                                 descrA,
-                                                 a,
-                                                 ia,
-                                                 ja,
-                                                 infoA);
+#if USE_MODERN_SPMV
+    /* Modern API: Create sparse matrix and dense vector descriptors */
+    if (spmat_A != NULL) {
+      rocsparse_destroy_spmat_descr(spmat_A);
+    }
+    ROCSPARSE_CHECK(rocsparse_create_csr_descr(&spmat_A,
+                                               n,
+                                               n,
+                                               nnz,
+                                               ia,
+                                               ja,
+                                               a,
+                                               rocsparse_indextype_i32,
+                                               rocsparse_indextype_i32,
+                                               rocsparse_index_base_zero,
+                                               rocsparse_datatype_f64_r));
+    
+    /* Create dense vector descriptors (will be updated with actual pointers during spmv) */
+    if (dnvec_x != NULL) {
+      rocsparse_destroy_dnvec_descr(dnvec_x);
+    }
+    if (dnvec_y != NULL) {
+      rocsparse_destroy_dnvec_descr(dnvec_y);
+    }
+    ROCSPARSE_CHECK(rocsparse_create_dnvec_descr(&dnvec_x,
+                                                  n,
+                                                  (void*)x,
+                                                  rocsparse_datatype_f64_r));
+    ROCSPARSE_CHECK(rocsparse_create_dnvec_descr(&dnvec_y,
+                                                  n,
+                                                  (void*)result,
+                                                  rocsparse_datatype_f64_r));
+    
+    /* Get buffer size for SpMV */
+    const real_type alpha = 1.0, beta = 0.0;
+    ROCSPARSE_CHECK(rocsparse_spmv(handle_rocsparse,
+                                   rocsparse_operation_none,
+                                   &alpha,
+                                   spmat_A,
+                                   dnvec_x,
+                                   &beta,
+                                   dnvec_y,
+                                   rocsparse_datatype_f64_r,
+                                   rocsparse_spmv_alg_default,
+                                   rocsparse_spmv_stage_buffer_size,
+                                   &spmv_buffer_size,
+                                   NULL));
+    
+    /* Allocate buffer */
+    if (spmv_buffer != NULL) {
+      HIP_CHECK(hipFree(spmv_buffer));
+    }
+    HIP_CHECK(hipMalloc(&spmv_buffer, spmv_buffer_size));
+    
+    /* Preprocess (analysis) */
+    ROCSPARSE_CHECK(rocsparse_spmv(handle_rocsparse,
+                                   rocsparse_operation_none,
+                                   &alpha,
+                                   spmat_A,
+                                   dnvec_x,
+                                   &beta,
+                                   dnvec_y,
+                                   rocsparse_datatype_f64_r,
+                                   rocsparse_spmv_alg_default,
+                                   rocsparse_spmv_stage_preprocess,
+                                   &spmv_buffer_size,
+                                   spmv_buffer));
+    
+    spmv_n = n;
+#else
+    /* Legacy API */
+    ROCSPARSE_CHECK(rocsparse_dcsrmv_analysis(handle_rocsparse,
+                                              rocsparse_operation_none,
+                                              n,
+                                              n,
+                                              nnz,
+                                              descrA,
+                                              a,
+                                              ia,
+                                              ja,
+                                              infoA));
+#endif
   }
 
   if (strcmp(option, "L") == 0) {
-    status_rocsparse = rocsparse_dcsrmv_analysis(handle_rocsparse,
-                                                 rocsparse_operation_none,
-                                                 n,
-                                                 n,
-                                                 nnz,
-                                                 descrL,
-                                                 a,
-                                                 ia,
-                                                 ja,
-                                                 infoL);
+    ROCSPARSE_CHECK(rocsparse_dcsrmv_analysis(handle_rocsparse,
+                                              rocsparse_operation_none,
+                                              n,
+                                              n,
+                                              nnz,
+                                              descrL,
+                                              a,
+                                              ia,
+                                              ja,
+                                              infoL));
   }
 
   if (strcmp(option, "U") == 0) {
-    status_rocsparse = rocsparse_dcsrmv_analysis(handle_rocsparse,
-                                                 rocsparse_operation_none,
-                                                 n,
-                                                 n,
-                                                 nnz,
-                                                 descrU,
-                                                 a,
-                                                 ia,
-                                                 ja,
-                                                 infoU);
+    ROCSPARSE_CHECK(rocsparse_dcsrmv_analysis(handle_rocsparse,
+                                              rocsparse_operation_none,
+                                              n,
+                                              n,
+                                              nnz,
+                                              descrU,
+                                              a,
+                                              ia,
+                                              ja,
+                                              infoU));
   }
 
-  if (status_rocsparse != 0) {
-    printf("mv analysis status for %s is %d \n", option, status_rocsparse);
-  }
-  hipDeviceSynchronize();
+  HIP_CHECK(hipDeviceSynchronize());
 }
 
-void initialize_and_analyze_L_and_U_solve(const int n, 
-                                          const int nnzL, 
-                                          int *lia, 
-                                          int *lja, 
+void initialize_and_analyze_L_and_U_solve(const int n,
+                                          const int nnzL,
+                                          int *lia,
+                                          int *lja,
                                           real_type *la,
-                                          const int nnzU, 
-                                          int *uia, 
-                                          int *uja, 
-                                          real_type *ua){
+                                          const int nnzU,
+                                          int *uia,
+                                          int *uja,
+                                          real_type *ua) {
 
-  size_t L_buffer_size;  
-  size_t U_buffer_size;  
-  rocsparse_status status_rocsparse;
+  size_t L_buffer_size;
+  size_t U_buffer_size;
 
-  status_rocsparse = rocsparse_dcsrsv_buffer_size(handle_rocsparse, 
-                                                  rocsparse_operation_none, 
-                                                  n, 
-                                                  nnzL, 
-                                                  descrL,
-                                                  la, 
-                                                  lia, 
-                                                  lja,
-                                                  infoL, 
-                                                  &L_buffer_size);
-
-  hipMalloc((void**)&(L_buffer), L_buffer_size);
-
-  status_rocsparse = rocsparse_dcsrsv_buffer_size(handle_rocsparse, 
-                                                  rocsparse_operation_none, 
-                                                  n, 
-                                                  nnzU, 
-                                                  descrU,
-                                                  ua, 
-                                                  uia, 
-                                                  uja,
-                                                  infoU, 
-                                                  &U_buffer_size);
-  hipMalloc((void**)&(U_buffer), U_buffer_size);
-
-  status_rocsparse = rocsparse_dcsrsv_analysis(handle_rocsparse, 
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_buffer_size(handle_rocsparse,
                                                rocsparse_operation_none,
                                                n,
                                                nnzL,
@@ -147,15 +291,12 @@ void initialize_and_analyze_L_and_U_solve(const int n,
                                                lia,
                                                lja,
                                                infoL,
-                                               rocsparse_analysis_policy_reuse,
-                                               rocsparse_solve_policy_auto,
-                                               L_buffer);
-  if (status_rocsparse != 0) {
-    printf("status after analysis 1 %d \n", status_rocsparse);
-  }
+                                               &L_buffer_size));
 
-  status_rocsparse = rocsparse_dcsrsv_analysis(handle_rocsparse, 
-                                               rocsparse_operation_none, 
+  HIP_CHECK(hipMalloc((void **)&(L_buffer), L_buffer_size));
+
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_buffer_size(handle_rocsparse,
+                                               rocsparse_operation_none,
                                                n,
                                                nnzU,
                                                descrU,
@@ -163,89 +304,70 @@ void initialize_and_analyze_L_and_U_solve(const int n,
                                                uia,
                                                uja,
                                                infoU,
-                                               rocsparse_analysis_policy_reuse,
-                                               rocsparse_solve_policy_auto,
-                                               U_buffer);
-  if (status_rocsparse != 0) {
-    printf("status after analysis 2 %d \n", status_rocsparse);
-  }
-  hipDeviceSynchronize();
+                                               &U_buffer_size));
+  HIP_CHECK(hipMalloc((void **)&(U_buffer), U_buffer_size));
+
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_analysis(handle_rocsparse,
+                                            rocsparse_operation_none,
+                                            n,
+                                            nnzL,
+                                            descrL,
+                                            la,
+                                            lia,
+                                            lja,
+                                            infoL,
+                                            rocsparse_analysis_policy_reuse,
+                                            rocsparse_solve_policy_auto,
+                                            L_buffer));
+
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_analysis(handle_rocsparse,
+                                            rocsparse_operation_none,
+                                            n,
+                                            nnzU,
+                                            descrU,
+                                            ua,
+                                            uia,
+                                            uja,
+                                            infoU,
+                                            rocsparse_analysis_policy_reuse,
+                                            rocsparse_solve_policy_auto,
+                                            U_buffer));
+  HIP_CHECK(hipDeviceSynchronize());
 }
 
-void initialize_ichol(const int n, 
-                      const int nnzA, 
-                      int *ia, 
-                      int *ja, 
-                      real_type *a)
-{
+void initialize_ichol(const int n,
+                      const int nnzA,
+                      int *ia,
+                      int *ja,
+                      real_type *a) {
   // printf("initializing ICHOLi, n = %d, nnzA = %d \n",n,nnzA);
   /* Create matrix descriptor for M */
-  rocsparse_status status_rocsparse;
-  rocsparse_create_mat_descr(&descrM);
-  rocsparse_set_mat_type(descrM, rocsparse_matrix_type_general);
+  ROCSPARSE_CHECK(rocsparse_create_mat_descr(&descrM));
+  ROCSPARSE_CHECK(rocsparse_set_mat_type(descrM, rocsparse_matrix_type_general));
 
   /* Create matrix descriptor for L */
-  rocsparse_create_mat_descr(&descrLic);
-  rocsparse_set_mat_fill_mode(descrLic, rocsparse_fill_mode_lower);
-  rocsparse_set_mat_diag_type(descrLic, rocsparse_diag_type_non_unit);
-  rocsparse_set_mat_index_base(descrLic, rocsparse_index_base_zero);
+  ROCSPARSE_CHECK(rocsparse_create_mat_descr(&descrLic));
+  ROCSPARSE_CHECK(rocsparse_set_mat_fill_mode(descrLic, rocsparse_fill_mode_lower));
+  ROCSPARSE_CHECK(rocsparse_set_mat_diag_type(descrLic, rocsparse_diag_type_non_unit));
+  ROCSPARSE_CHECK(rocsparse_set_mat_index_base(descrLic, rocsparse_index_base_zero));
 
   /* Create matrix descriptor for L' */
-  rocsparse_create_mat_descr(&descrLtic);
-  rocsparse_set_mat_fill_mode(descrLtic, rocsparse_fill_mode_upper);
-  rocsparse_set_mat_diag_type(descrLtic, rocsparse_diag_type_non_unit);
-  rocsparse_set_mat_index_base(descrLtic, rocsparse_index_base_zero);
+  ROCSPARSE_CHECK(rocsparse_create_mat_descr(&descrLtic));
+  ROCSPARSE_CHECK(rocsparse_set_mat_fill_mode(descrLtic, rocsparse_fill_mode_upper));
+  ROCSPARSE_CHECK(rocsparse_set_mat_diag_type(descrLtic, rocsparse_diag_type_non_unit));
+  ROCSPARSE_CHECK(rocsparse_set_mat_index_base(descrLtic, rocsparse_index_base_zero));
 
   /* Create matrix info structure */
-  rocsparse_create_mat_info(&infoM);
-  rocsparse_create_mat_info(&infoLic);
-  rocsparse_create_mat_info(&infoLtic);
+  ROCSPARSE_CHECK(rocsparse_create_mat_info(&infoM));
+  ROCSPARSE_CHECK(rocsparse_create_mat_info(&infoLic));
+  ROCSPARSE_CHECK(rocsparse_create_mat_info(&infoLtic));
 
   /* Obtain required buffer size */
   size_t buffer_size_M;
   size_t buffer_size_L;
   size_t buffer_size_Lt;
 
-  rocsparse_dcsric0_buffer_size(handle_rocsparse,
-                                n,
-                                nnzA,
-                                descrM,
-                                a,
-                                ia,
-                                ja,
-                                infoM,
-                                &buffer_size_M);
-
-  rocsparse_dcsrsv_buffer_size(handle_rocsparse,
-                               rocsparse_operation_none,
-                               n,
-                               nnzA,
-                               descrLic,
-                               a,
-                               ia,
-                               ja,
-                               infoM,
-                               &buffer_size_L);
-
-  rocsparse_dcsrsv_buffer_size(handle_rocsparse,
-                               rocsparse_operation_transpose,
-                               n,
-                               nnzA,
-                               descrLic,
-                               a,
-                               ia,
-                               ja,
-                               infoM,
-                               &buffer_size_Lt);
-  // printf("Buffer sizes: %d %d %d \n", buffer_size_M, buffer_size_L, buffer_size_Lt);
-  size_t buffer_size = max(buffer_size_M, max(buffer_size_L, buffer_size_Lt));
-  // printf("finalsize %d \n",buffer_size);
-  // Allocate temporary buffer
-  hipMalloc(&ichol_buffer, buffer_size);
-
-  /* Perform analysis steps, using rocsparse_analysis_policy_reuse to improve 
-   * computation performance */
-  status_rocsparse = rocsparse_dcsric0_analysis(handle_rocsparse,
+  ROCSPARSE_CHECK(rocsparse_dcsric0_buffer_size(handle_rocsparse,
                                                 n,
                                                 nnzA,
                                                 descrM,
@@ -253,11 +375,9 @@ void initialize_ichol(const int n,
                                                 ia,
                                                 ja,
                                                 infoM,
-                                                rocsparse_analysis_policy_reuse,
-                                                rocsparse_solve_policy_auto,
-                                                ichol_buffer);
-  // printf("status 0: %d \n", status_rocsparse);
-  status_rocsparse = rocsparse_dcsrsv_analysis(handle_rocsparse,
+                                                &buffer_size_M));
+
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_buffer_size(handle_rocsparse,
                                                rocsparse_operation_none,
                                                n,
                                                nnzA,
@@ -266,11 +386,9 @@ void initialize_ichol(const int n,
                                                ia,
                                                ja,
                                                infoM,
-                                               rocsparse_analysis_policy_reuse,
-                                               rocsparse_solve_policy_auto,
-                                               ichol_buffer);
-  // printf("status 1: %d \n", status_rocsparse);
-  status_rocsparse = rocsparse_dcsrsv_analysis(handle_rocsparse,
+                                               &buffer_size_L));
+
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_buffer_size(handle_rocsparse,
                                                rocsparse_operation_transpose,
                                                n,
                                                nnzA,
@@ -279,10 +397,52 @@ void initialize_ichol(const int n,
                                                ia,
                                                ja,
                                                infoM,
-                                               rocsparse_analysis_policy_reuse,
-                                               rocsparse_solve_policy_auto,
-                                               ichol_buffer);
-  // printf("status 2: %d \n", status_rocsparse);
+                                               &buffer_size_Lt));
+  // printf("Buffer sizes: %d %d %d \n", buffer_size_M, buffer_size_L, buffer_size_Lt);
+  size_t buffer_size = max(buffer_size_M, max(buffer_size_L, buffer_size_Lt));
+  // printf("finalsize %d \n",buffer_size);
+  // Allocate temporary buffer
+  HIP_CHECK(hipMalloc(&ichol_buffer, buffer_size));
+
+  /* Perform analysis steps, using rocsparse_analysis_policy_reuse to improve
+   * computation performance */
+  ROCSPARSE_CHECK(rocsparse_dcsric0_analysis(handle_rocsparse,
+                                             n,
+                                             nnzA,
+                                             descrM,
+                                             a,
+                                             ia,
+                                             ja,
+                                             infoM,
+                                             rocsparse_analysis_policy_reuse,
+                                             rocsparse_solve_policy_auto,
+                                             ichol_buffer));
+
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_analysis(handle_rocsparse,
+                                            rocsparse_operation_none,
+                                            n,
+                                            nnzA,
+                                            descrLic,
+                                            a,
+                                            ia,
+                                            ja,
+                                            infoM,
+                                            rocsparse_analysis_policy_reuse,
+                                            rocsparse_solve_policy_auto,
+                                            ichol_buffer));
+
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_analysis(handle_rocsparse,
+                                            rocsparse_operation_transpose,
+                                            n,
+                                            nnzA,
+                                            descrLic,
+                                            a,
+                                            ia,
+                                            ja,
+                                            infoM,
+                                            rocsparse_analysis_policy_reuse,
+                                            rocsparse_solve_policy_auto,
+                                            ichol_buffer));
 
   /* Check for zero pivot */
   rocsparse_int position;
@@ -293,17 +453,16 @@ void initialize_ichol(const int n,
   }
 
   /* Compute incomplete Cholesky factorization M = LL' */
-  status_rocsparse =	rocsparse_dcsric0(handle_rocsparse,
-                                        n,
-                                        nnzA,
-                                        descrM,
-                                        a,
-                                        ia,
-                                        ja,
-                                        infoM,
-                                        rocsparse_solve_policy_auto,
-                                        ichol_buffer);
-  // printf("status 3: %d \n", status_rocsparse);
+  ROCSPARSE_CHECK(rocsparse_dcsric0(handle_rocsparse,
+                                    n,
+                                    nnzA,
+                                    descrM,
+                                    a,
+                                    ia,
+                                    ja,
+                                    infoM,
+                                    rocsparse_solve_policy_auto,
+                                    ichol_buffer));
 
   /* Check for zero pivot */
   if (rocsparse_status_zero_pivot == rocsparse_csric0_zero_pivot(handle_rocsparse,
@@ -313,63 +472,55 @@ void initialize_ichol(const int n,
            position,
            position);
   }
-    hipDeviceSynchronize();
+  HIP_CHECK(hipDeviceSynchronize());
 }
 
-void hip_ichol(const int *ia, 
-               const int *ja, 
-               real_type *a, 
-               const int nnzA, 
-               pdata *prec_data, 
-               real_type *x, 
-               real_type *y)
-{
+void hip_ichol(const int *ia,
+               const int *ja,
+               real_type *a,
+               const int nnzA,
+               pdata *prec_data,
+               real_type *x,
+               real_type *y) {
   real_type one = 1.0;
-  rocsparse_status st;
-  st = rocsparse_dcsrsv_solve(handle_rocsparse,
-                              rocsparse_operation_none,
-                              prec_data->n,
-                              nnzA,
-                              &one,
-                              descrLic,
-                              prec_data->ichol_vals,
-                              ia,
-                              ja,
-                              infoM,
-                              x,//input
-                              prec_data->aux_vec1, //output 
-                              rocsparse_solve_policy_auto,
-                              ichol_buffer);
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_solve(handle_rocsparse,
+                                         rocsparse_operation_none,
+                                         prec_data->n,
+                                         nnzA,
+                                         &one,
+                                         descrLic,
+                                         prec_data->ichol_vals,
+                                         ia,
+                                         ja,
+                                         infoM,
+                                         x,       //input
+                                         prec_data->aux_vec1, //output
+                                         rocsparse_solve_policy_auto,
+                                         ichol_buffer));
 
-  if (st != 0) {
-    printf("before L^T solve: norm of input %16.16e, norm of output %16.16e\n", hip_dot (prec_data->n, prec_data->aux_vec1, prec_data->aux_vec1), hip_dot (prec_data->n, y, y) );
-  } 
   /* Solve L'y = z */
-  st = rocsparse_dcsrsv_solve(handle_rocsparse,
-                              rocsparse_operation_transpose,
-                              prec_data->n,
-                              nnzA,
-                              &one,
-                              descrLic,
-                              prec_data->ichol_vals,
-                              ia,
-                              ja,
-                              infoM,
-                              prec_data->aux_vec1, 
-                              y, 
-                              rocsparse_solve_policy_auto,
-                              ichol_buffer);
-  if (st != 0) {
-    printf("status L^T solve: %d \n", st);
-  }
-  hipDeviceSynchronize();
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_solve(handle_rocsparse,
+                                         rocsparse_operation_transpose,
+                                         prec_data->n,
+                                         nnzA,
+                                         &one,
+                                         descrLic,
+                                         prec_data->ichol_vals,
+                                         ia,
+                                         ja,
+                                         infoM,
+                                         prec_data->aux_vec1,
+                                         y,
+                                         rocsparse_solve_policy_auto,
+                                         ichol_buffer));
+  HIP_CHECK(hipDeviceSynchronize());
 }
 
 __global__ void hip_vec_vec_kernel(const int n,
                                    const real_type *x,
                                    const real_type *y,
-                                   real_type *z){
-  int idx = blockIdx.x * blockDim.x + threadIdx.x; 
+                                   real_type *z) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (idx < n) {
     z[idx] = x[idx] * y[idx];
 
@@ -377,14 +528,57 @@ __global__ void hip_vec_vec_kernel(const int n,
   }
 }
 
+/* Kernel to compute norm and normalize vector in one pass */
+/* Uses block reduction for norm computation */
+__global__ void hip_normalize_kernel(const int n, real_type *v, real_type *d_nrm, real_type eps) {
+  extern __shared__ real_type sdata[];
+  
+  int tid = threadIdx.x;
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int gridSize = blockDim.x * gridDim.x;
+  
+  /* Compute partial sum of squares */
+  real_type sum = 0.0;
+  for (int i = idx; i < n; i += gridSize) {
+    sum += v[i] * v[i];
+  }
+  sdata[tid] = sum;
+  __syncthreads();
+  
+  /* Block reduction */
+  for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    if (tid < s) {
+      sdata[tid] += sdata[tid + s];
+    }
+    __syncthreads();
+  }
+  
+  /* Thread 0 writes block result */
+  if (tid == 0) {
+    atomicAdd(d_nrm, sdata[0]);
+  }
+}
+
+__global__ void hip_scale_by_inv_nrm_kernel(const int n, real_type *v, real_type *d_nrm, real_type eps) {
+  real_type nrm = sqrt(*d_nrm);
+  if (nrm > eps) {
+    real_type inv_nrm = 1.0 / nrm;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    while (idx < n) {
+      v[idx] *= inv_nrm;
+      idx += blockDim.x * gridDim.x;
+    }
+  }
+}
+
 __global__ void hip_vec_reciprocal_kernel(const int n,
                                           const real_type *x,
-                                          real_type *z){
-  int idx = blockIdx.x * blockDim.x + threadIdx.x; 
+                                          real_type *z) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (idx < n) {
-    if  (x[idx] != 0.0){ 
+    if (x[idx] != 0.0) {
       z[idx] = 1.0 / x[idx];
-    } else { 
+    } else {
       z[idx] = 0.0;
     }
 
@@ -394,8 +588,8 @@ __global__ void hip_vec_reciprocal_kernel(const int n,
 
 __global__ void hip_vec_sqrt_kernel(const int n,
                                     const real_type *x,
-                                    real_type *z){
-  int idx = blockIdx.x * blockDim.x + threadIdx.x; 
+                                    real_type *z) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
   while (idx < n) {
     if (x[idx] > 0) {
       z[idx] = sqrt(x[idx]);
@@ -408,11 +602,11 @@ __global__ void hip_vec_sqrt_kernel(const int n,
 }
 
 
-__global__ void hip_vec_set_kernel(const int n, 
+__global__ void hip_vec_set_kernel(const int n,
                                    real_type value,
-                                   real_type *x){
-  int idx = blockIdx.x * blockDim.x + threadIdx.x; 
-  while (idx < n){
+                                   real_type *x) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < n) {
     x[idx] = value;
 
     idx += blockDim.x * gridDim.x;
@@ -420,211 +614,915 @@ __global__ void hip_vec_set_kernel(const int n,
 }
 
 __global__ void hip_vec_zero_kernel(const int n,
-                                    real_type *x){
-  int idx = blockIdx.x * blockDim.x + threadIdx.x; 
-  while (idx < n){
-    x[idx] =  0.0;
+                                    real_type *x) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < n) {
+    x[idx] = 0.0;
 
     idx += blockDim.x * gridDim.x;
   }
 }
 
-real_type hip_dot (const int n, const real_type *v, const real_type *w){
+real_type hip_dot(const int n,
+                  const real_type *v,
+                  const real_type *w) {
   real_type sum;
 
-  hipDeviceSynchronize();
-  rocblas_ddot (handle_rocblas, 
-                n, 
-                v, 
-                1, 
-                w, 
-                1, 
-                &sum);
-  hipDeviceSynchronize();
+  ROCBLAS_CHECK(rocblas_ddot(handle_rocblas,
+                             n,
+                             v,
+                             1,
+                             w,
+                             1,
+                             &sum));
+  HIP_CHECK(hipDeviceSynchronize());  /* Sync needed to read result */
   return sum;
 }
 
-void hip_scal (const int n, const real_type alpha, real_type *v){
-  rocblas_dscal(handle_rocblas, 
-                n,
-                &alpha,
-                v, 
-                1);
-  hipDeviceSynchronize();
+void hip_scal(const int n,
+              const real_type alpha,
+              real_type *v) {
+  ROCBLAS_CHECK(rocblas_dscal(handle_rocblas,
+                              n,
+                              &alpha,
+                              v,
+                              1));
+  /* No sync needed - async execution */
 }
 
-void hip_axpy (const int n, const real_type alpha, const real_type *x, real_type *y){
-  rocblas_daxpy(handle_rocblas, 
-                n,
-                &alpha,
-                x, 
-                1,
-                y, 
-                1);
-  hipDeviceSynchronize();
+void hip_axpy(const int n,
+              const real_type alpha,
+              const real_type *x,
+              real_type *y) {
+  ROCBLAS_CHECK(rocblas_daxpy(handle_rocblas,
+                              n,
+                              &alpha,
+                              x,
+                              1,
+                              y,
+                              1));
+  /* No sync needed - async execution */
 }
 
-void hip_csr_matvec(const int n, 
-                    const int nnz, 
-                    const int *ia, 
-                    const int *ja, 
-                    const real_type *a, 
-                    const real_type *x, 
-                    real_type *result, 
-                    const real_type *al, 
-                    const real_type *bet, 
-                    const char *kind){
-  /* y = alpha *A* x + beta *y */
-  rocsparse_status st;
-  hipDeviceSynchronize();
+void hip_csr_matvec(const int n,
+                    const int nnz,
+                    const int *ia,
+                    const int *ja,
+                    const real_type *a,
+                    const real_type *x,
+                    real_type *result,
+                    const real_type *al,
+                    const real_type *bet,
+                    const char *kind) {
+  /* y = alpha * A * x + beta * y */
   if (strcmp(kind, "A") == 0) {
-    st = rocsparse_dcsrmv(handle_rocsparse,
-                          rocsparse_operation_none,
-                          n,
-                          n,
-                          nnz,
-                          al,
-                          descrA,
-                          a,
-                          ia,
-                          ja,
-                          infoA,
-                          x,
-                          bet,
-                          result);
-  } 
+#if USE_MODERN_SPMV
+    /* Modern API: Update vector pointers and compute */
+    ROCSPARSE_CHECK(rocsparse_dnvec_set_values(dnvec_x, (void*)x));
+    ROCSPARSE_CHECK(rocsparse_dnvec_set_values(dnvec_y, (void*)result));
+    
+    ROCSPARSE_CHECK(rocsparse_spmv(handle_rocsparse,
+                                   rocsparse_operation_none,
+                                   al,
+                                   spmat_A,
+                                   dnvec_x,
+                                   bet,
+                                   dnvec_y,
+                                   rocsparse_datatype_f64_r,
+                                   rocsparse_spmv_alg_default,
+                                   rocsparse_spmv_stage_compute,
+                                   &spmv_buffer_size,
+                                   spmv_buffer));
+#else
+    /* Legacy API - no sync needed, async execution */
+    ROCSPARSE_CHECK(rocsparse_dcsrmv(handle_rocsparse,
+                                     rocsparse_operation_none,
+                                     n,
+                                     n,
+                                     nnz,
+                                     al,
+                                     descrA,
+                                     a,
+                                     ia,
+                                     ja,
+                                     infoA,
+                                     x,
+                                     bet,
+                                     result));
+#endif
+  }
 
   if (strcmp(kind, "L") == 0) {
-    st = rocsparse_dcsrmv(handle_rocsparse,
-                          rocsparse_operation_none,
-                          n,
-                          n,
-                          nnz,
-                          al,
-                          descrL,
-                          a,
-                          ia,
-                          ja,
-                          infoL,
-                          x,
-                          bet,
-                          result);
+    /* Legacy L matvec - no sync needed, async execution */
+    ROCSPARSE_CHECK(rocsparse_dcsrmv(handle_rocsparse,
+                                     rocsparse_operation_none,
+                                     n,
+                                     n,
+                                     nnz,
+                                     al,
+                                     descrL,
+                                     a,
+                                     ia,
+                                     ja,
+                                     infoL,
+                                     x,
+                                     bet,
+                                     result));
   }
 
   if (strcmp(kind, "U") == 0) {
-    st = rocsparse_dcsrmv(handle_rocsparse,
-                          rocsparse_operation_none,
-                          n,
-                          n,
-                          nnz,
-                          al,
-                          descrU,
-                          a,
-                          ia,
-                          ja,
-                          infoU,
-                          x,
-                          bet,
-                          result);
+    /* Legacy U matvec - no sync needed, async execution */
+    ROCSPARSE_CHECK(rocsparse_dcsrmv(handle_rocsparse,
+                                     rocsparse_operation_none,
+                                     n,
+                                     n,
+                                     nnz,
+                                     al,
+                                     descrU,
+                                     a,
+                                     ia,
+                                     ja,
+                                     infoU,
+                                     x,
+                                     bet,
+                                     result));
   }
-  hipDeviceSynchronize();
-  // printf("status after mv: %d\n", st);
+  /* Note: Modern SpMV API (kind "A") does not need sync here - async execution */
 }
 
+
+void hip_gemv(const char *T,
+              const int m,
+              const int n,
+              const double *alpha,
+              const double *A,
+              const int lda,
+              const double *x,
+              const double *beta,
+              double *y) {
+  rocblas_operation op;
+  if (strcmp(T, "T") == 0) {
+    //transpose
+    op = rocblas_operation_transpose;
+  } else {
+    //non-transpose, default
+    op = rocblas_operation_none;
+  }
+
+  ROCBLAS_CHECK(rocblas_dgemv(handle_rocblas,
+                              op,
+                              m,
+                              n,
+                              alpha,
+                              A,
+                              lda,
+                              x,
+                              1,
+                              beta,
+                              y,
+                              1));
+  /* No sync needed - async execution */
+}
+
+
 void hip_lower_triangular_solve(const int n,
-                                const int nnzL, 
-                                const int *lia, 
-                                const int *lja, 
+                                const int nnzL,
+                                const int *lia,
+                                const int *lja,
                                 const real_type *la,
-                                const real_type *diagonal, 
-                                const real_type *x, 
-                                real_type *result){
+                                const real_type *diagonal,
+                                const real_type *x,
+                                real_type *result) {
   /* compute result = L^{-1}x */
   /* we DO NOT assume anything about L diagonal */
   /* d_x3 = L^(-1)dx2 */
   real_type one = 1.0;
 
-  hipDeviceSynchronize();
-  rocsparse_dcsrsv_solve(handle_rocsparse, 
-                         rocsparse_operation_none,
-                         n,
-                         nnzL, 
-                         &one, 
-                         descrL,
-                         la,
-                         lia,
-                         lja,
-                         infoL,
-                         x,
-                         result,
-                         rocsparse_solve_policy_auto,
-                         L_buffer);
-  hipDeviceSynchronize();
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_solve(handle_rocsparse,
+                                         rocsparse_operation_none,
+                                         n,
+                                         nnzL,
+                                         &one,
+                                         descrL,
+                                         la,
+                                         lia,
+                                         lja,
+                                         infoL,
+                                         x,
+                                         result,
+                                         rocsparse_solve_policy_auto,
+                                         L_buffer));
+  /* No sync - async execution, next op will wait on stream */
 }
 
-void hip_upper_triangular_solve(const int n, 
-                                const int nnzU, 
-                                const int *uia, 
-                                const int *uja, 
-                                const real_type *ua, 
-                                const real_type *diagonal, 
-                                const real_type *x, 
-                                real_type *result){
+void hip_upper_triangular_solve(const int n,
+                                const int nnzU,
+                                const int *uia,
+                                const int *uja,
+                                const real_type *ua,
+                                const real_type *diagonal,
+                                const real_type *x,
+                                real_type *result) {
   /* compute result = U^{-1}x */
   real_type one = 1.0;
-  hipDeviceSynchronize();
-  rocsparse_dcsrsv_solve(handle_rocsparse, 
-                         rocsparse_operation_none,
-                         n, 
-                         nnzU, 
-                         &one, 
-                         descrU,
-                         ua,
-                         uia,
-                         uja,
-                         infoU,
-                         x,
-                         result,
-                         rocsparse_solve_policy_auto,
-                         U_buffer);
-  hipDeviceSynchronize();
+  ROCSPARSE_CHECK(rocsparse_dcsrsv_solve(handle_rocsparse,
+                                         rocsparse_operation_none,
+                                         n,
+                                         nnzU,
+                                         &one,
+                                         descrU,
+                                         ua,
+                                         uia,
+                                         uja,
+                                         infoU,
+                                         x,
+                                         result,
+                                         rocsparse_solve_policy_auto,
+                                         U_buffer));
+  /* No sync - async execution, next op will wait on stream */
 }
 
-/* not std blas but needed and embarassingly parallel */ 
+/* not std blas but needed and embarassingly parallel */
 
 /* hip vec-vec computes an element-wise product (needed for scaling) */
 
-void hip_vec_vec(const int n, const real_type *x, const real_type *y, real_type *res){
+void hip_vec_vec(const int n,
+                 const real_type *x,
+                 const real_type *y,
+                 real_type *res) {
   hipLaunchKernelGGL(hip_vec_vec_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, x, y, res);
-  hipDeviceSynchronize();
+  /* No sync needed - async execution */
 }
 
-/*vector reciprocal computes 1./d */ 
+/* vector reciprocal computes 1./d */
 
-void hip_vector_reciprocal(const int n, const real_type *v, real_type *res){
-  hipLaunchKernelGGL( hip_vec_reciprocal_kernel,dim3(n / 1024 + 1), dim3(1024), 0, 0, n, v, res);
-  hipDeviceSynchronize();
+void hip_vector_reciprocal(const int n,
+                           const real_type *v,
+                           real_type *res) {
+  hipLaunchKernelGGL(hip_vec_reciprocal_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, v, res);
+  /* No sync needed - async execution */
 }
 
-//vector sqrt takes an sqrt from each vector entry 
+// vector sqrt takes an sqrt from each vector entry
 
-void hip_vector_sqrt(const int n, const real_type *v, real_type *res){
-  hipLaunchKernelGGL(hip_vec_sqrt_kernel, dim3(n / 1024 +1), dim3(1024), 0,0,n, v, res);
-  hipDeviceSynchronize();
+void hip_vector_sqrt(const int n,
+                     const real_type *v,
+                     real_type *res) {
+  hipLaunchKernelGGL(hip_vec_sqrt_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, v, res);
+  /* No sync needed - async execution */
 }
 
-void hip_vec_copy(const int n, const real_type *src, real_type *dest){
-  hipMemcpy(dest, src, sizeof(real_type) * n, hipMemcpyDeviceToDevice);
-  hipDeviceSynchronize();
+void hip_vec_copy(const int n,
+                  const real_type *src,
+                  real_type *dest) {
+  if (n <= 0 || src == NULL || dest == NULL) {
+    return;
+  }
+  HIP_CHECK(hipMemcpy(dest, src, sizeof(real_type) * n, hipMemcpyDeviceToDevice));
+  /* No sync needed for D2D - async execution */
 }
 
 
-void hip_vec_set(const int n, real_type value, real_type *vec){
-  hipLaunchKernelGGL(hip_vec_set_kernel,dim3(n/ 1024 + 1), dim3(1024), 0, 0, n, value, vec);
-  hipDeviceSynchronize();
+void hip_vec_set(const int n,
+                 real_type value,
+                 real_type *vec) {
+  hipLaunchKernelGGL(hip_vec_set_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, value, vec);
+  /* No sync needed - async execution */
 }
 
-void hip_vec_zero(const int n, real_type *vec){
-  hipLaunchKernelGGL(hip_vec_zero_kernel,dim3(n / 1024 + 1), dim3(1024), 0, 0, n, vec);
-  hipDeviceSynchronize();
+void hip_vec_zero(const int n,
+                  real_type *vec) {
+  hipLaunchKernelGGL(hip_vec_zero_kernel, dim3(n / 1024 + 1), dim3(1024), 0, 0, n, vec);
+  /* No sync needed - async execution */
+}
+
+/* Sparse matrix times dense matrix: C = alpha * A * B + beta * C
+ * A is sparse CSR (n x n), B is dense (n x k), C is dense (n x k)
+ * All matrices are column-major
+ * For now, use loop of SpMV - SpMM setup overhead not worth it for small k
+ */
+void hip_csrmm(const int n, const int k, const int nnz,
+               const int *ia, const int *ja, const real_type *a,
+               const real_type *B, real_type *C,
+               const real_type alpha, const real_type beta,
+               const char *kind) {
+  /* Use loop of SpMV - the SpMV path is already optimized */
+  for (int j = 0; j < k; ++j) {
+    hip_csr_matvec(n, nnz, ia, ja, a, B + j * n, C + j * n, &alpha, &beta, kind);
+  }
+}
+
+void hip_gemm(const char *transA,
+              const char *transB,
+              const int m,
+              const int n,
+              const int k,
+              const real_type *alpha,
+              const real_type *A,
+              const int lda,
+              const real_type *B,
+              const int ldb,
+              const real_type *beta,
+              real_type *C,
+              const int ldc) {
+  rocblas_operation opA = (transA[0] == 'T' || transA[0] == 't') 
+                           ? rocblas_operation_transpose 
+                           : rocblas_operation_none;
+  rocblas_operation opB = (transB[0] == 'T' || transB[0] == 't') 
+                           ? rocblas_operation_transpose 
+                           : rocblas_operation_none;
+  
+  ROCBLAS_CHECK(rocblas_dgemm(handle_rocblas,
+                              opA,
+                              opB,
+                              m,
+                              n,
+                              k,
+                              alpha,
+                              A,
+                              lda,
+                              B,
+                              ldb,
+                              beta,
+                              C,
+                              ldc));
+  /* No sync needed - async execution */
+}
+
+real_type hip_nrm2(const int n, const real_type *v) {
+  real_type result;
+  ROCBLAS_CHECK(rocblas_dnrm2(handle_rocblas, n, v, 1, &result));
+  HIP_CHECK(hipDeviceSynchronize());
+  return result;
+}
+
+/* 
+ * Simple Jacobi eigenvalue algorithm for symmetric matrices (host version)
+ * Used for small dense matrices in LOBPCG Rayleigh-Ritz step
+ */
+static void hip_jacobi_eigen_host(int n, real_type *A, real_type *w, real_type *V) {
+  int max_iter = 100 * n * n;
+  real_type eps = 1e-14;
+  
+  /* Initialize V to identity */
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      V[i + j * n] = (i == j) ? 1.0 : 0.0;
+    }
+  }
+  
+  /* Work on copy of A */
+  real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
+  for (int i = 0; i < n * n; ++i) {
+    Acopy[i] = A[i];
+  }
+  
+  for (int iter = 0; iter < max_iter; ++iter) {
+    /* Find largest off-diagonal element */
+    int p = 0, q = 1;
+    real_type max_val = 0.0;
+    for (int i = 0; i < n; ++i) {
+      for (int j = i + 1; j < n; ++j) {
+        real_type absval = fabs(Acopy[i + j * n]);
+        if (absval > max_val) {
+          max_val = absval;
+          p = i;
+          q = j;
+        }
+      }
+    }
+    
+    if (max_val < eps) break;
+    
+    /* Compute Jacobi rotation */
+    real_type app = Acopy[p + p * n];
+    real_type aqq = Acopy[q + q * n];
+    real_type apq = Acopy[p + q * n];
+    
+    real_type theta = 0.5 * atan2(2.0 * apq, aqq - app);
+    real_type c = cos(theta);
+    real_type s = sin(theta);
+    
+    /* Apply rotation to Acopy */
+    for (int i = 0; i < n; ++i) {
+      if (i != p && i != q) {
+        real_type aip = Acopy[i + p * n];
+        real_type aiq = Acopy[i + q * n];
+        Acopy[i + p * n] = c * aip - s * aiq;
+        Acopy[p + i * n] = Acopy[i + p * n];
+        Acopy[i + q * n] = s * aip + c * aiq;
+        Acopy[q + i * n] = Acopy[i + q * n];
+      }
+    }
+    Acopy[p + p * n] = c * c * app - 2.0 * s * c * apq + s * s * aqq;
+    Acopy[q + q * n] = s * s * app + 2.0 * s * c * apq + c * c * aqq;
+    Acopy[p + q * n] = 0.0;
+    Acopy[q + p * n] = 0.0;
+    
+    /* Apply rotation to V */
+    for (int i = 0; i < n; ++i) {
+      real_type vip = V[i + p * n];
+      real_type viq = V[i + q * n];
+      V[i + p * n] = c * vip - s * viq;
+      V[i + q * n] = s * vip + c * viq;
+    }
+  }
+  
+  /* Extract eigenvalues */
+  for (int i = 0; i < n; ++i) {
+    w[i] = Acopy[i + i * n];
+  }
+  
+  /* Sort eigenvalues and eigenvectors in ascending order */
+  for (int i = 0; i < n - 1; ++i) {
+    int min_idx = i;
+    for (int j = i + 1; j < n; ++j) {
+      if (w[j] < w[min_idx]) min_idx = j;
+    }
+    if (min_idx != i) {
+      real_type tmp = w[i];
+      w[i] = w[min_idx];
+      w[min_idx] = tmp;
+      for (int k = 0; k < n; ++k) {
+        tmp = V[k + i * n];
+        V[k + i * n] = V[k + min_idx * n];
+        V[k + min_idx * n] = tmp;
+      }
+    }
+  }
+  
+  free(Acopy);
+}
+
+static int hip_cholesky_host(int n, real_type *A) {
+  for (int j = 0; j < n; ++j) {
+    real_type sum = A[j + j * n];
+    for (int k = 0; k < j; ++k) {
+      sum -= A[j + k * n] * A[j + k * n];
+    }
+    if (sum <= 0.0) return -1;
+    A[j + j * n] = sqrt(sum);
+    
+    for (int i = j + 1; i < n; ++i) {
+      sum = A[i + j * n];
+      for (int k = 0; k < j; ++k) {
+        sum -= A[i + k * n] * A[j + k * n];
+      }
+      A[i + j * n] = sum / A[j + j * n];
+    }
+  }
+  return 0;
+}
+
+/* Standard symmetric eigenvalue problem - host side for small dense matrices */
+void hip_dsyev(const int n,
+               real_type *A,
+               real_type *w,
+               real_type *eigvecs) {
+  /* A, w, eigvecs are assumed to be on HOST for dense eigenvalue problems */
+  hip_jacobi_eigen_host(n, A, w, eigvecs);
+}
+
+/* Generalized symmetric eigenvalue problem: A*x = lambda*B*x */
+/* GPU implementation using rocSOLVER */
+void hip_dsygv(const int n,
+               real_type *A,
+               real_type *B,
+               real_type *w,
+               real_type *eigvecs) {
+  /* A, B, w, eigvecs are assumed to be on HOST for dense eigenvalue problems */
+  
+  /* Allocate/reallocate device buffers if needed */
+  if (n > eig_max_n) {
+    if (d_eig_A != NULL) HIP_CHECK(hipFree(d_eig_A));
+    if (d_eig_B != NULL) HIP_CHECK(hipFree(d_eig_B));
+    if (d_eig_W != NULL) HIP_CHECK(hipFree(d_eig_W));
+    if (d_eig_E != NULL) HIP_CHECK(hipFree(d_eig_E));
+    if (d_eig_info != NULL) HIP_CHECK(hipFree(d_eig_info));
+    
+    HIP_CHECK(hipMalloc(&d_eig_A, n * n * sizeof(real_type)));
+    HIP_CHECK(hipMalloc(&d_eig_B, n * n * sizeof(real_type)));
+    HIP_CHECK(hipMalloc(&d_eig_W, n * sizeof(real_type)));
+    HIP_CHECK(hipMalloc(&d_eig_E, n * sizeof(real_type)));
+    HIP_CHECK(hipMalloc(&d_eig_info, sizeof(rocblas_int)));
+    eig_max_n = n;
+  }
+  
+  /* Regularization for ill-conditioned B matrix */
+  real_type min_diag = fabs(B[0]);
+  real_type trace = 0.0;
+  for (int i = 0; i < n; ++i) {
+    real_type d = fabs(B[i + i * n]);
+    trace += d;
+    if (d < min_diag) min_diag = d;
+  }
+  
+  /* Apply regularization if needed (modify host copy before upload) */
+  real_type *B_reg = NULL;
+  if (min_diag < 1e-12) {
+    B_reg = (real_type*) malloc(n * n * sizeof(real_type));
+    memcpy(B_reg, B, n * n * sizeof(real_type));
+    real_type reg = 1e-8 * (trace / n + 1.0);
+    for (int i = 0; i < n; ++i) {
+      B_reg[i + i * n] += reg;
+    }
+  }
+  
+  /* Copy matrices to device */
+  HIP_CHECK(hipMemcpy(d_eig_A, A, n * n * sizeof(real_type), hipMemcpyHostToDevice));
+  HIP_CHECK(hipMemcpy(d_eig_B, B_reg ? B_reg : B, n * n * sizeof(real_type), hipMemcpyHostToDevice));
+  
+  if (B_reg) free(B_reg);
+  
+  /* Call rocSOLVER dsygv */
+  /* itype = rocblas_eform_ax: A*x = lambda*B*x */
+  /* evect = rocblas_evect_original: compute eigenvectors */
+  /* uplo = rocblas_fill_upper: upper triangle stored */
+  rocblas_status status = rocsolver_dsygv(handle_rocblas,
+                                          rocblas_eform_ax,
+                                          rocblas_evect_original,
+                                          rocblas_fill_upper,
+                                          n,
+                                          d_eig_A,
+                                          n,
+                                          d_eig_B,
+                                          n,
+                                          d_eig_W,
+                                          d_eig_E,
+                                          d_eig_info);
+  
+  /* Check for errors */
+  rocblas_int h_info = 0;
+  HIP_CHECK(hipMemcpy(&h_info, d_eig_info, sizeof(rocblas_int), hipMemcpyDeviceToHost));
+  
+  if (status != rocblas_status_success || h_info != 0) {
+    /* rocSOLVER failed - fall back to CPU Jacobi */
+    real_type *Bcopy = (real_type*) malloc(n * n * sizeof(real_type));
+    real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
+    real_type *C = (real_type*) malloc(n * n * sizeof(real_type));
+    
+    memcpy(Bcopy, B, n * n * sizeof(real_type));
+    memcpy(Acopy, A, n * n * sizeof(real_type));
+    
+    /* Add regularization */
+    real_type reg = 1e-6 * (trace / n + 1.0);
+    for (int i = 0; i < n; ++i) {
+      Bcopy[i + i * n] += reg;
+    }
+    
+    hip_cholesky_host(n, Bcopy);
+    
+    for (int j = 0; j < n; ++j) {
+      for (int i = 0; i < n; ++i) {
+        real_type sum = Acopy[i + j * n];
+        for (int k = 0; k < i; ++k) {
+          sum -= Bcopy[i + k * n] * C[k + j * n];
+        }
+        C[i + j * n] = sum / Bcopy[i + i * n];
+      }
+    }
+    
+    for (int j = 0; j < n; ++j) {
+      for (int i = n - 1; i >= 0; --i) {
+        real_type sum = C[j + i * n];
+        for (int kk = i + 1; kk < n; ++kk) {
+          sum -= Bcopy[kk + i * n] * Acopy[j + kk * n];
+        }
+        Acopy[j + i * n] = sum / Bcopy[i + i * n];
+      }
+    }
+    
+    for (int i = 0; i < n; ++i) {
+      for (int j = i + 1; j < n; ++j) {
+        real_type avg = 0.5 * (Acopy[i + j * n] + Acopy[j + i * n]);
+        Acopy[i + j * n] = avg;
+        Acopy[j + i * n] = avg;
+      }
+    }
+    
+    hip_jacobi_eigen_host(n, Acopy, w, eigvecs);
+    
+    for (int kk = 0; kk < n; ++kk) {
+      for (int i = n - 1; i >= 0; --i) {
+        real_type sum = eigvecs[i + kk * n];
+        for (int j = i + 1; j < n; ++j) {
+          sum -= Bcopy[j + i * n] * eigvecs[j + kk * n];
+        }
+        eigvecs[i + kk * n] = sum / Bcopy[i + i * n];
+      }
+    }
+    
+    free(Bcopy);
+    free(Acopy);
+    free(C);
+    return;
+  }
+  
+  /* Copy results back to host */
+  /* Eigenvectors are in d_eig_A (column-major), eigenvalues in d_eig_W */
+  HIP_CHECK(hipMemcpy(eigvecs, d_eig_A, n * n * sizeof(real_type), hipMemcpyDeviceToHost));
+  HIP_CHECK(hipMemcpy(w, d_eig_W, n * sizeof(real_type), hipMemcpyDeviceToHost));
+}
+
+/**
+ * Generate random vectors directly on GPU using hiprand
+ * This matches CG_experiments behavior for reproducibility
+ * d_vec: device pointer to n*nev doubles
+ * seed: random seed for reproducibility
+ */
+void hip_generate_random_vectors(real_type *d_vec, int64_t n, int nev, unsigned long long seed) {
+  hiprandGenerator_t gen;
+  /* Use XORWOW for deterministic results (DEFAULT may vary between runs) */
+  HIPRAND_CHECK(hiprandCreateGenerator(&gen, HIPRAND_RNG_PSEUDO_XORWOW));
+  HIPRAND_CHECK(hiprandSetPseudoRandomGeneratorSeed(gen, seed));
+  
+  /* Generate uniform doubles in [0, 1) */
+  HIPRAND_CHECK(hiprandGenerateUniformDouble(gen, d_vec, n * nev));
+  
+  HIPRAND_CHECK(hiprandDestroyGenerator(gen));
+  HIP_CHECK(hipDeviceSynchronize());
+}
+
+/* Pre-allocated buffers for batched operations */
+static real_type *d_gram_buffer = NULL;
+static real_type *h_gram_buffer = NULL;
+static int gram_buffer_size = 0;
+
+/**
+ * Compute column norms of matrix V (n x k) using batched GEMM approach
+ * This avoids k separate hipDeviceSynchronize calls by:
+ * 1. Computing gram = V'*V (k x k) with one GEMM
+ * 2. Extracting sqrt of diagonal elements
+ * 
+ * V: device pointer to n x k matrix (column-major)
+ * norms: host pointer to k doubles (output)
+ */
+void hip_compute_col_norms_batched(int n, int k, const real_type *V, real_type *norms) {
+  if (k <= 0 || n <= 0) return;
+  
+  /* Reallocate buffers if needed */
+  if (k * k > gram_buffer_size) {
+    if (d_gram_buffer != NULL) HIP_CHECK(hipFree(d_gram_buffer));
+    if (h_gram_buffer != NULL) free(h_gram_buffer);
+    gram_buffer_size = k * k * 2;  /* Allocate 2x to reduce reallocs */
+    HIP_CHECK(hipMalloc(&d_gram_buffer, gram_buffer_size * sizeof(real_type)));
+    h_gram_buffer = (real_type*) malloc(gram_buffer_size * sizeof(real_type));
+  }
+  
+  /* Compute gram = V' * V using GEMM */
+  real_type one = 1.0, zero = 0.0;
+  ROCBLAS_CHECK(rocblas_dgemm(handle_rocblas,
+                              rocblas_operation_transpose,
+                              rocblas_operation_none,
+                              k, k, n,
+                              &one,
+                              V, n,
+                              V, n,
+                              &zero,
+                              d_gram_buffer, k));
+  
+  /* Copy Gram matrix diagonal to host - single sync */
+  HIP_CHECK(hipMemcpy(h_gram_buffer, d_gram_buffer, k * k * sizeof(real_type), hipMemcpyDeviceToHost));
+  
+  /* Extract sqrt of diagonal */
+  for (int i = 0; i < k; ++i) {
+    norms[i] = sqrt(h_gram_buffer[i + i * k]);
+  }
+}
+
+/* Pre-allocated buffer for batched nrm2 */
+static real_type *d_nrm2_buffer = NULL;
+static int nrm2_buffer_size = 0;
+
+/* Pre-allocated buffers for Cholesky QR */
+static real_type *d_cholqr_gram = NULL;
+static real_type *h_cholqr_gram = NULL;
+static real_type *h_cholqr_L = NULL;
+static real_type *d_cholqr_Linv = NULL;
+static int cholqr_max_k = 0;
+
+/**
+ * Batched nrm2 for k vectors of length n stored contiguously (column-major)
+ * Uses rocblas_dnrm2_strided_batched for efficiency
+ * 
+ * V: device pointer to n x k matrix (column-major), stride = n between columns
+ * norms: host pointer to k doubles (output)
+ */
+void hip_nrm2_batched(int n, int k, const real_type *V, real_type *norms) {
+  if (k <= 0 || n <= 0) return;
+  
+  /* Reallocate buffer if needed */
+  if (k > nrm2_buffer_size) {
+    if (d_nrm2_buffer != NULL) HIP_CHECK(hipFree(d_nrm2_buffer));
+    nrm2_buffer_size = k * 2;  /* Allocate 2x to reduce reallocs */
+    HIP_CHECK(hipMalloc(&d_nrm2_buffer, nrm2_buffer_size * sizeof(real_type)));
+  }
+  
+  /* Use strided batched nrm2 */
+  ROCBLAS_CHECK(rocblas_dnrm2_strided_batched(handle_rocblas,
+                                              n,           /* length of each vector */
+                                              V,           /* pointer to first vector */
+                                              1,           /* incx */
+                                              n,           /* stride between vectors */
+                                              k,           /* batch count */
+                                              d_nrm2_buffer));   /* results array */
+  
+  /* Single sync and copy */
+  HIP_CHECK(hipMemcpy(norms, d_nrm2_buffer, k * sizeof(real_type), hipMemcpyDeviceToHost));
+}
+
+/**
+ * Cholesky QR orthonormalization - batched approach with O(1) syncs
+ * Replaces CGS2's O(k) syncs with just 2 syncs total
+ * 
+ * Algorithm:
+ * 1. Compute Gram matrix G = V'*V using GEMM
+ * 2. Compute Cholesky: G = L*L' on host
+ * 3. Solve V * L^T = V_orth for V_orth using TRSM on device (in-place)
+ * 
+ * V: device pointer to n x k matrix (column-major), modified in-place
+ * Returns: 0 on success, -1 if Cholesky fails (matrix is rank-deficient)
+ */
+/* Pre-allocated buffer for device-side norms */
+static real_type *d_norm_scratch = NULL;
+
+/**
+ * Normalize a vector on device without host sync
+ * Uses custom kernels for norm computation and scaling
+ */
+void hip_normalize_vector_nosync(int n, real_type *v, real_type eps) {
+  if (d_norm_scratch == NULL) {
+    HIP_CHECK(hipMalloc(&d_norm_scratch, sizeof(real_type)));
+  }
+  
+  /* Zero the norm accumulator */
+  HIP_CHECK(hipMemsetAsync(d_norm_scratch, 0, sizeof(real_type)));
+  
+  /* Compute norm using reduction kernel */
+  int blockSize = 256;
+  int numBlocks = (n + blockSize - 1) / blockSize;
+  if (numBlocks > 256) numBlocks = 256;
+  
+  hipLaunchKernelGGL(hip_normalize_kernel, dim3(numBlocks), dim3(blockSize), 
+                     blockSize * sizeof(real_type), 0, n, v, d_norm_scratch, eps);
+  
+  /* Scale the vector by 1/norm */
+  hipLaunchKernelGGL(hip_scale_by_inv_nrm_kernel, dim3(numBlocks), dim3(blockSize),
+                     0, 0, n, v, d_norm_scratch, eps);
+}
+
+/**
+ * CGS2 orthonormalization entirely on device - no per-column sync
+ * V is n x k column-major matrix
+ */
+void hip_cgs2_device(int n, int k, real_type *V, real_type eps) {
+  real_type one = 1.0, zero = 0.0, neg_one = -1.0;
+  
+  /* Pre-allocate coefficient buffer if needed */
+  static real_type *d_coeffs = NULL;
+  static int coeffs_size = 0;
+  if (k > coeffs_size) {
+    if (d_coeffs != NULL) HIP_CHECK(hipFree(d_coeffs));
+    coeffs_size = k * 2;
+    HIP_CHECK(hipMalloc(&d_coeffs, coeffs_size * sizeof(real_type)));
+  }
+  
+  /* Normalize first column */
+  hip_normalize_vector_nosync(n, V, eps);
+  
+  /* Process remaining columns */
+  for (int i = 1; i < k; ++i) {
+    real_type *vi = V + i * n;
+    real_type *Vprev = V;
+    
+    /* First pass: coeffs = Vprev' * vi, vi = vi - Vprev * coeffs */
+    ROCBLAS_CHECK(rocblas_dgemv(handle_rocblas, rocblas_operation_transpose,
+                                n, i, &one, Vprev, n, vi, 1, &zero, d_coeffs, 1));
+    ROCBLAS_CHECK(rocblas_dgemv(handle_rocblas, rocblas_operation_none,
+                                n, i, &neg_one, Vprev, n, d_coeffs, 1, &one, vi, 1));
+    
+    /* Second pass (reorthogonalization) */
+    ROCBLAS_CHECK(rocblas_dgemv(handle_rocblas, rocblas_operation_transpose,
+                                n, i, &one, Vprev, n, vi, 1, &zero, d_coeffs, 1));
+    ROCBLAS_CHECK(rocblas_dgemv(handle_rocblas, rocblas_operation_none,
+                                n, i, &neg_one, Vprev, n, d_coeffs, 1, &one, vi, 1));
+    
+    /* Normalize column i - no sync! */
+    hip_normalize_vector_nosync(n, vi, eps);
+  }
+  
+  /* Single sync at the end to ensure all operations complete */
+  HIP_CHECK(hipDeviceSynchronize());
+}
+
+/* Pre-allocated buffers for TSQR */
+static real_type *d_tsqr_tau = NULL;
+static real_type *d_tsqr_work = NULL;
+static int tsqr_max_k = 0;
+static int tsqr_max_n = 0;
+
+/**
+ * TSQR orthonormalization using rocSOLVER
+ * Uses dgeqrf (QR factorization) + dorgqr (generate Q)
+ * Single sync at the end instead of O(k) syncs
+ */
+int hip_tsqr(int n, int k, real_type *V) {
+  if (k <= 0 || n <= 0) return 0;
+  
+  /* Reallocate buffers if needed */
+  if (k > tsqr_max_k || n > tsqr_max_n) {
+    if (d_tsqr_tau != NULL) HIP_CHECK(hipFree(d_tsqr_tau));
+    
+    tsqr_max_k = k * 2;
+    tsqr_max_n = n;
+    HIP_CHECK(hipMalloc(&d_tsqr_tau, tsqr_max_k * sizeof(real_type)));
+  }
+  
+  /* Call rocSOLVER dgeqrf to compute QR factorization */
+  /* V = Q * R, where Q is stored implicitly in V and tau */
+  ROCBLAS_CHECK(rocsolver_dgeqrf(handle_rocblas, n, k, V, n, d_tsqr_tau));
+  
+  /* Call rocSOLVER dorgqr to explicitly form Q */
+  /* This overwrites V with the first k columns of Q */
+  ROCBLAS_CHECK(rocsolver_dorgqr(handle_rocblas, n, k, k, V, n, d_tsqr_tau));
+  
+  /* No sync - let subsequent operations wait implicitly */
+  return 0;
+}
+
+int hip_cholesky_qr(int n, int k, real_type *V) {
+  if (k <= 0 || n <= 0) return 0;
+  
+  /* Reallocate buffers if needed */
+  if (k > cholqr_max_k) {
+    if (d_cholqr_gram != NULL) HIP_CHECK(hipFree(d_cholqr_gram));
+    if (h_cholqr_gram != NULL) free(h_cholqr_gram);
+    if (h_cholqr_L != NULL) free(h_cholqr_L);
+    if (d_cholqr_Linv != NULL) HIP_CHECK(hipFree(d_cholqr_Linv));
+    
+    cholqr_max_k = k * 2;
+    HIP_CHECK(hipMalloc(&d_cholqr_gram, cholqr_max_k * cholqr_max_k * sizeof(real_type)));
+    HIP_CHECK(hipMalloc(&d_cholqr_Linv, cholqr_max_k * cholqr_max_k * sizeof(real_type)));
+    h_cholqr_gram = (real_type*) malloc(cholqr_max_k * cholqr_max_k * sizeof(real_type));
+    h_cholqr_L = (real_type*) malloc(cholqr_max_k * cholqr_max_k * sizeof(real_type));
+  }
+  
+  real_type one = 1.0, zero = 0.0;
+  
+  /* Step 1: Compute Gram matrix G = V' * V on device */
+  ROCBLAS_CHECK(rocblas_dgemm(handle_rocblas,
+                              rocblas_operation_transpose,
+                              rocblas_operation_none,
+                              k, k, n,
+                              &one,
+                              V, n,
+                              V, n,
+                              &zero,
+                              d_cholqr_gram, k));
+  
+  /* Copy Gram matrix to host */
+  HIP_CHECK(hipMemcpy(h_cholqr_gram, d_cholqr_gram, k * k * sizeof(real_type), hipMemcpyDeviceToHost));
+  
+  /* Step 2: Cholesky factorization on host: G = L * L' */
+  /* We need upper triangular R where G = R' * R, so L = R' */
+  memset(h_cholqr_L, 0, k * k * sizeof(real_type));
+  
+  for (int j = 0; j < k; ++j) {
+    real_type sum = h_cholqr_gram[j + j * k];
+    for (int kk = 0; kk < j; ++kk) {
+      sum -= h_cholqr_L[kk + j * k] * h_cholqr_L[kk + j * k];
+    }
+    if (sum <= 1e-14) {
+      /* Matrix is not positive definite - fall back to CGS2 */
+      return -1;
+    }
+    h_cholqr_L[j + j * k] = sqrt(sum);
+    
+    for (int i = j + 1; i < k; ++i) {
+      sum = h_cholqr_gram[j + i * k];
+      for (int kk = 0; kk < j; ++kk) {
+        sum -= h_cholqr_L[kk + j * k] * h_cholqr_L[kk + i * k];
+      }
+      h_cholqr_L[j + i * k] = sum / h_cholqr_L[j + j * k];
+    }
+  }
+  
+  /* Copy R (upper triangular) to device */
+  HIP_CHECK(hipMemcpy(d_cholqr_Linv, h_cholqr_L, k * k * sizeof(real_type), hipMemcpyHostToDevice));
+  
+  /* Step 3: Solve V * R = V_orth using TRSM (in-place on V) */
+  /* rocblas_dtrsm: X * op(A) = alpha * B, solving for X */
+  /* We want: V_orth * R = V, so V_orth = V * R^{-1} */
+  /* side = right, uplo = upper, transA = none, diag = non-unit */
+  ROCBLAS_CHECK(rocblas_dtrsm(handle_rocblas,
+                              rocblas_side_right,
+                              rocblas_fill_upper,
+                              rocblas_operation_none,
+                              rocblas_diagonal_non_unit,
+                              n, k,
+                              &one,
+                              d_cholqr_Linv, k,
+                              V, n));
+  
+  return 0;
 }

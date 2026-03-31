@@ -1,6 +1,9 @@
 //std Gauss Seidel with tri solves
 #include "common.h"
 #include "blas.h"
+#if (CUDA || HIP)
+#include "devMem.h"
+#endif
 
 void GS_std(int *ia, int *ja, real_type *a, int nnzA,  pdata *prec_data, real_type *vec_in, real_type *vec_out){
 
@@ -38,6 +41,97 @@ void GS_std(int *ia, int *ja, real_type *a, int nnzA,  pdata *prec_data, real_ty
     upper_triangular_solve(n, prec_data->unnz, prec_data->uia, prec_data->uja, prec_data->ua,prec_data->d, prec_data->aux_vec2, prec_data->aux_vec1);
 
     axpy(n, 1.0, prec_data->aux_vec1, vec_out);
+  }
+}
+
+/* Batched helper: element-wise multiply each column of X by vector d */
+static void batch_vec_vec(int n, int k, const real_type *X, const real_type *d, real_type *Y) {
+  for (int j = 0; j < k; ++j) {
+    vec_vec(n, X + j * n, (real_type*)d, Y + j * n);
+  }
+}
+
+/* Batched helper: copy matrix */
+static void batch_vec_copy(int n, int k, const real_type *src, real_type *dest) {
+  for (int j = 0; j < k; ++j) {
+    vec_copy(n, (real_type*)(src + j * n), dest + j * n);
+  }
+}
+
+/* Batched helper: axpy for each column */
+static void batch_axpy(int n, int k, real_type alpha, const real_type *X, real_type *Y) {
+  for (int j = 0; j < k; ++j) {
+    axpy(n, alpha, (real_type*)(X + j * n), Y + j * n);
+  }
+}
+
+/* Batched sparse matrix-matrix multiply: C = alpha * A * B + beta * C */
+static void batch_csr_matvec(int n, int nnz, int *ia, int *ja, real_type *a,
+                             int k, const real_type *B, real_type *C,
+                             real_type alpha, real_type beta, const char *kind) {
+  csrmm(n, k, nnz, ia, ja, a, B, C, alpha, beta, kind);
+}
+
+/* Batched iterative GS - process k_batch vectors at once */
+void GS_it_batched(int *ia, int *ja, real_type *a, int nnzA, pdata *prec_data,
+                   int k_batch, real_type *mat_in, real_type *mat_out) {
+  int n = prec_data->n;
+  int k = prec_data->k;
+  int m = prec_data->m;
+
+  real_type one = 1.0;
+  real_type minusone = -1.0;
+
+  /* Allocate batched aux matrices (static for reuse) */
+  static real_type *aux_mat1 = NULL;
+  static real_type *aux_mat2 = NULL;
+  static real_type *aux_mat3 = NULL;
+  static int aux_size = 0;
+
+  if (n * k_batch > aux_size) {
+    if (aux_mat1) { free(aux_mat1); free(aux_mat2); free(aux_mat3); }
+#if (CUDA || HIP)
+    aux_mat1 = (real_type*) mallocForDevice(aux_mat1, n * k_batch, sizeof(real_type));
+    aux_mat2 = (real_type*) mallocForDevice(aux_mat2, n * k_batch, sizeof(real_type));
+    aux_mat3 = (real_type*) mallocForDevice(aux_mat3, n * k_batch, sizeof(real_type));
+#else
+    aux_mat1 = (real_type*) malloc(n * k_batch * sizeof(real_type));
+    aux_mat2 = (real_type*) malloc(n * k_batch * sizeof(real_type));
+    aux_mat3 = (real_type*) malloc(n * k_batch * sizeof(real_type));
+#endif
+    aux_size = n * k_batch;
+  }
+
+  /* Zero output */
+  vec_zero(n * k_batch, mat_out);
+
+  /* Outer loop */
+  for (int j = 0; j < m; ++j) {
+    /* r = b - A*x for all columns */
+    batch_vec_copy(n, k_batch, mat_in, aux_mat2);
+    batch_csr_matvec(n, nnzA, ia, ja, a, k_batch, mat_out, aux_mat2, minusone, one, "A");
+
+    /* y = D^{-1} * r for all columns */
+    batch_vec_vec(n, k_batch, aux_mat2, prec_data->d_r, aux_mat1);
+
+    /* Forward sweep: k iterations */
+    for (int i = 0; i < k; ++i) {
+      batch_vec_copy(n, k_batch, aux_mat2, aux_mat3);
+      batch_csr_matvec(n, prec_data->lnnz, prec_data->lia, prec_data->lja, prec_data->la,
+                       k_batch, aux_mat1, aux_mat3, minusone, one, "L");
+      batch_vec_vec(n, k_batch, aux_mat3, prec_data->d_r, aux_mat1);
+    }
+
+    /* Backward sweep: k iterations */
+    for (int i = 0; i < k; ++i) {
+      batch_vec_copy(n, k_batch, aux_mat2, aux_mat3);
+      batch_csr_matvec(n, prec_data->unnz, prec_data->uia, prec_data->uja, prec_data->ua,
+                       k_batch, aux_mat1, aux_mat3, minusone, one, "U");
+      batch_vec_vec(n, k_batch, aux_mat3, prec_data->d_r, aux_mat1);
+    }
+
+    /* Update: x = x + y for all columns */
+    batch_axpy(n, k_batch, one, aux_mat1, mat_out);
   }
 }
 

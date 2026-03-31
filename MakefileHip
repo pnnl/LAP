@@ -10,8 +10,8 @@ FLAGS := -O3 -g
 CFLAGS :=  -lgomp  
 FLAGS_OMP := -mp=gpu -gpu=cc80 -fopenmp  -Minfo=mp
 FLAGS_HIP := -D__HIP_PLATFORM_HCC__
-LIBS_HIP := -L/opt/rocm-6.2.3/lib -lrocsparse  -L/opt/rocm-6.2.3/lib -lrocblas 
-INCLUDES_HIP := -I/opt/rocm-6.2.3/include/rocblas  -I/opt/rocm-6.2.3/include/rocsparse 
+LIBS_HIP := -L/opt/rocm-7.1.1/lib -lrocsparse  -L/opt/rocm-7.1.1/lib -lrocblas 
+INCLUDES_HIP := -I/opt/rocm-7.1.1/include/rocblas  -I/opt/rocm-7.1.1/include/rocsparse 
 LIBS = -lm
 
 SRCOMP = openmp_blas.c

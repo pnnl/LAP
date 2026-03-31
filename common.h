@@ -1,7 +1,8 @@
-#include<math.h>
-#include<stdio.h>
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
-#define USE_FP64 0
+
+#define USE_FP64 1
 #if USE_FP64
 #define real_type double
 #else
@@ -11,28 +12,28 @@
 #pragma once
 
 #ifndef V100
-#	define V100 0
+#define V100 0
 #endif
 #ifndef NOACC
-#	define NOACC 0
+#define NOACC 0
 #endif
 #ifndef CUDA
-#	define CUDA 1
+#define CUDA 1
 #endif
 #ifndef OPENMP
-#	define OPENMP 0
+#define OPENMP 0
 #endif
 #ifndef HIP
 #define HIP 0
 #endif
 
-typedef struct{
- 
+typedef struct {
+
   int *lia;
   int *lja;
   real_type *la;
-  int lnnz; 
- 
+  int lnnz;
+
   int *uia;
   int *uja;
   real_type *ua;
@@ -40,35 +41,87 @@ typedef struct{
 
   real_type *ichol_vals;
   real_type *d;
-  real_type *d_r;//d_r = 1./d
+  real_type *d_r; // d_r = 1./d
   int n;
 
-  real_type *aux_vec1, *aux_vec2, *aux_vec3;
+  real_type *aux_vec1;
+  real_type *aux_vec2;
+  real_type *aux_vec3;
 
   char *prec_op;
-  int m, k;//m is outer loop, k inner
+  int m;  // m is outer loop
+  int k;  // k is inner loop
 } pdata;
 
-void prec_function(int *ia, int *ja, real_type *a, int nnzA,pdata* prec_data, real_type * x, real_type *y);
+void prec_function(int *ia,
+                   int *ja,
+                   real_type *a,
+                   int nnzA,
+                   pdata *prec_data,
+                   real_type *x,
+                   real_type *y);
 
-void cg(int n, real_type nnz,
-        int *ia, //matrix csr data
+void cg(int n,
+        real_type nnz,
+        int *ia,
         int *ja,
         real_type *a,
-        real_type *x, //solution vector, mmust be alocated prior to calling
-        real_type *b, //rhs
-        real_type tol, //DONT MULTIPLY BY NORM OF B
-        pdata *prec_data, //preconditioner data: all Ls, Us etc
+        real_type *x,
+        real_type *b,
+        real_type tol,
+        pdata *prec_data,
         int maxit,
-        int *it, //output: iteration
-        int *flag, //output: flag 0-converged, 1-maxit reached, 2-catastrophic failure
-        real_type *res_norm_history //output: residual norm history
-       );
+        int *it,
+        int *flag,
+        real_type *res_norm_history);
 
 /* preconditioners */
 
-void GS_std(int *ia, int *ja, real_type *a, int nnzA,  pdata* prec_data, real_type *vec_in, real_type *vec_out);
-void GS_it(int *ia, int *ja, real_type *a, int nnzA,  pdata* prec_data, real_type *vec_in, real_type *vec_out);
-void GS_it2(int *ia, int *ja, real_type *a, int nnzA,  pdata* prec_data, real_type *vec_in, real_type *vec_out);
-void it_jacobi(int *ia, int *ja, real_type *a, int nnzA,  pdata* prec_data, real_type *vec_in, real_type *vec_out);
-void line_jacobi(int *ia, int *ja, real_type *a, int nnzA,  pdata* prec_data, real_type *vec_in, real_type *vec_out);
+void GS_std(int *ia,
+            int *ja,
+            real_type *a,
+            int nnzA,
+            pdata *prec_data,
+            real_type *vec_in,
+            real_type *vec_out);
+
+void GS_it(int *ia,
+           int *ja,
+           real_type *a,
+           int nnzA,
+           pdata *prec_data,
+           real_type *vec_in,
+           real_type *vec_out);
+
+void GS_it_batched(int *ia,
+                   int *ja,
+                   real_type *a,
+                   int nnzA,
+                   pdata *prec_data,
+                   int k_batch,
+                   real_type *mat_in,
+                   real_type *mat_out);
+
+void GS_it2(int *ia,
+            int *ja,
+            real_type *a,
+            int nnzA,
+            pdata *prec_data,
+            real_type *vec_in,
+            real_type *vec_out);
+
+void it_jacobi(int *ia,
+               int *ja,
+               real_type *a,
+               int nnzA,
+               pdata *prec_data,
+               real_type *vec_in,
+               real_type *vec_out);
+
+void line_jacobi(int *ia,
+                 int *ja,
+                 real_type *a,
+                 int nnzA,
+                 pdata *prec_data,
+                 real_type *vec_in,
+                 real_type *vec_out);

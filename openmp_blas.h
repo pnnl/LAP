@@ -47,6 +47,16 @@ void openmp_vec_copy(const int n, const real_type *src, real_type *dest);
 
 void openmp_vec_zero(const int n, real_type *vec);
 
+void openmp_gemv(const char *T,
+                 const int m,
+                 const int n,
+                 const double *alpha,
+                 const double *A,
+                 const int lda,
+                 const double *x,
+                 const double *beta,
+                 double *y);
+
 void initialize_ichol(const int n, 
                       const int nnzA, 
                       int *ia, 
@@ -57,5 +67,39 @@ void initialize_ichol(const int n,
                       real_type *la);
 
 void openmp_ichol(const int *ia, const int *ja, real_type *a, int nnzA, pdata *prec_data, real_type *x, real_type *y);
+
+/* GEMM: C = alpha * op(A) * op(B) + beta * C */
+void openmp_gemm(const char *transA,
+                 const char *transB,
+                 const int m,
+                 const int n,
+                 const int k,
+                 const real_type *alpha,
+                 const real_type *A,
+                 const int lda,
+                 const real_type *B,
+                 const int ldb,
+                 const real_type *beta,
+                 real_type *C,
+                 const int ldc);
+
+/* Generalized symmetric eigenvalue problem: A*x = lambda*B*x */
+void openmp_dsygv(const int n,
+                  real_type *A,
+                  real_type *B,
+                  real_type *w,
+                  real_type *eigvecs);
+
+/* Standard symmetric eigenvalue problem: A*x = lambda*x */
+void openmp_dsyev(const int n,
+                  real_type *A,
+                  real_type *w,
+                  real_type *eigvecs);
+
+/* Vector 2-norm */
+real_type openmp_nrm2(const int n, const real_type *v);
+
+/* Set vector elements to value */
+void openmp_vec_set(const int n, real_type value, real_type *vec);
 
 //#endif

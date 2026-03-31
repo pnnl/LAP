@@ -12,54 +12,61 @@
 
 #include "blas.h"
 
-real_type dot (const int n, const real_type *v, const real_type *w){
+real_type dot(const int n,
+              const real_type *v,
+              const real_type *w) {
   real_type d;
 #if NOACC
-  d = simple_dot (n, v, w);
-#elif  CUDA
-  d = cuda_dot (n, v, w);
+  d = simple_dot(n, v, w);
+#elif CUDA
+  d = cuda_dot(n, v, w);
 #elif OPENMP
-  d = openmp_dot (n, v, w);
+  d = openmp_dot(n, v, w);
 #elif HIP
-  d = hip_dot (n, v, w);
+  d = hip_dot(n, v, w);
 #endif
   return d;
 }
 
-void axpy (const int n, const real_type alpha, real_type *x, real_type *y){
+void axpy(const int n,
+          const real_type alpha,
+          real_type *x,
+          real_type *y) {
 #if NOACC
-  simple_axpy (n, alpha, x, y);
+  simple_axpy(n, alpha, x, y);
 #elif CUDA
-  cuda_axpy (n, alpha, x, y);
+  cuda_axpy(n, alpha, x, y);
 #elif OPENMP
-  openmp_axpy (n, alpha, x, y);
+  openmp_axpy(n, alpha, x, y);
 #elif HIP
-  hip_axpy (n, alpha, x, y);
+  hip_axpy(n, alpha, x, y);
 #endif
 }
 
-void scal (const int n, const real_type alpha, real_type *v){
+void scal(const int n,
+          const real_type alpha,
+          real_type *v) {
 #if NOACC
-  simple_scal (n, alpha, v);
+  simple_scal(n, alpha, v);
 #elif CUDA
-  cuda_scal (n, alpha, v);
+  cuda_scal(n, alpha, v);
 #elif OPENMP
-  openmp_scal (n, alpha, v);
+  openmp_scal(n, alpha, v);
 #elif HIP
-  hip_scal (n, alpha, v);
+  hip_scal(n, alpha, v);
 #endif
 }
 
-void csr_matvec(const int n, 
-                const int nnz, 
-                const int *ia, 
-                const int *ja, 
-                const real_type *a, 
-                const real_type *x, 
-                real_type *result, 
-                const real_type *al, 
+void csr_matvec(const int n,
+                const int nnz,
+                const int *ia,
+                const int *ja,
+                const real_type *a,
+                const real_type *x,
+                real_type *result,
+                const real_type *al,
                 const real_type *bet,
-                const char *kind){
+                const char *kind) {
 #if NOACC
   simple_csr_matvec(n, nnz, ia, ja, a, x, result, al, bet);
 #elif CUDA
@@ -72,14 +79,14 @@ void csr_matvec(const int n,
 }
 
 
-void lower_triangular_solve(const int n, 
-                            const int nnz, 
-                            const int *lia, 
-                            const int *lja, 
+void lower_triangular_solve(const int n,
+                            const int nnz,
+                            const int *lia,
+                            const int *lja,
                             const real_type *la,
-                            const real_type * diag, 
-                            const real_type *x, 
-                            real_type *result){
+                            const real_type *diag,
+                            const real_type *x,
+                            real_type *result) {
 #if NOACC
   simple_lower_triangular_solve(n, nnz, lia, lja, la, diag, x, result);
 #elif CUDA
@@ -91,14 +98,14 @@ void lower_triangular_solve(const int n,
 #endif
 }
 
-void upper_triangular_solve(const int n, 
-                            const int nnz, 
-                            const int *uia, 
-                            const int *uja, 
+void upper_triangular_solve(const int n,
+                            const int nnz,
+                            const int *uia,
+                            const int *uja,
                             const real_type *ua,
-                            const real_type *diag, 
-                            const real_type *x, 
-                            real_type *result){
+                            const real_type *diag,
+                            const real_type *x,
+                            real_type *result) {
 #if NOACC
   simple_upper_triangular_solve(n, nnz, uia, uja, ua, diag, x, result);
 #elif CUDA
@@ -110,19 +117,51 @@ void upper_triangular_solve(const int n,
 #endif
 }
 
-void ichol(const int *ia, const int *ja, real_type *a, const int nnzA, pdata *prec_data, real_type *x, real_type *y){
+void ichol(const int *ia,
+           const int *ja,
+           real_type *a,
+           const int nnzA,
+           pdata *prec_data,
+           real_type *x,
+           real_type *y) {
 #if NOACC
-  simple_ichol( ia, ja, a, nnzA, prec_data, x, y);
+  simple_ichol(ia, ja, a, nnzA, prec_data, x, y);
 #elif CUDA
-  cuda_ichol( ia, ja, a, nnzA, prec_data, x, y);
+  cuda_ichol(ia, ja, a, nnzA, prec_data, x, y);
 #elif OPENMP
-  openmp_ichol( ia, ja, a, nnzA, prec_data, x, y);
+  openmp_ichol(ia, ja, a, nnzA, prec_data, x, y);
 #elif HIP
-  hip_ichol( ia, ja, a, nnzA, prec_data, x, y);
+  hip_ichol(ia, ja, a, nnzA, prec_data, x, y);
 #endif
 }
 
-void vec_vec(const int n, const real_type *x, real_type *y, real_type *res){
+
+void gemv(const char *T,
+          const int m,
+          const int n,
+          const double *alpha,
+          const double *A,
+          const int lda,
+          const double *x,
+          const double *beta,
+          double *y) {
+
+#if NOACC
+  simple_gemv(T, m, n, alpha, A, lda, x, beta, y);
+#elif CUDA
+  cuda_gemv(T, m, n, alpha, A, lda, x, beta, y);
+#elif OPENMP
+  openmp_gemv(T, m, n, alpha, A, lda, x, beta, y);
+#elif HIP
+  hip_gemv(T, m, n, alpha, A, lda, x, beta, y);
+#endif
+}
+
+
+void vec_vec(const int n,
+             const real_type *x,
+             real_type *y,
+             real_type *res) {
 #if NOACC
   simple_vec_vec(n, x, y, res);
 #elif CUDA
@@ -135,7 +174,9 @@ void vec_vec(const int n, const real_type *x, real_type *y, real_type *res){
 }
 
 
-void vector_reciprocal(const int n, const real_type *v, real_type *res){
+void vector_reciprocal(const int n,
+                       const real_type *v,
+                       real_type *res) {
 #if NOACC
   simple_vector_reciprocal(n, v, res);
 #elif CUDA
@@ -148,7 +189,9 @@ void vector_reciprocal(const int n, const real_type *v, real_type *res){
 }
 
 
-void vector_sqrt(const int n, const real_type *v, real_type *res){
+void vector_sqrt(const int n,
+                 const real_type *v,
+                 real_type *res) {
 #if NOACC
   simple_vector_sqrt(n, v, res);
 #elif CUDA
@@ -161,7 +204,9 @@ void vector_sqrt(const int n, const real_type *v, real_type *res){
 }
 
 
-void vec_copy(const int n, real_type *src, real_type *dest){
+void vec_copy(const int n,
+              real_type *src,
+              real_type *dest) {
 #if NOACC
   simple_vec_copy(n, src, dest);
 #elif CUDA
@@ -173,7 +218,8 @@ void vec_copy(const int n, real_type *src, real_type *dest){
 #endif
 }
 
-void vec_zero(const int n, real_type *vec){
+void vec_zero(const int n,
+              real_type *vec) {
 #if NOACC
   simple_vec_zero(n, vec);
 #elif CUDA
@@ -182,5 +228,174 @@ void vec_zero(const int n, real_type *vec){
   openmp_vec_zero(n, vec);
 #elif HIP
   hip_vec_zero(n, vec);
+#endif
+}
+
+void csrmm(const int n, const int k, const int nnz,
+           const int *ia, const int *ja, const real_type *a,
+           const real_type *B, real_type *C,
+           const real_type alpha, const real_type beta,
+           const char *kind) {
+#if NOACC || OPENMP
+  /* Fallback to loop of SpMV */
+  for (int j = 0; j < k; ++j) {
+    real_type al = alpha, bt = beta;
+    csr_matvec(n, nnz, ia, ja, a, B + j * n, C + j * n, &al, &bt, kind);
+  }
+#elif CUDA
+  /* TODO: implement CUDA SpMM */
+  for (int j = 0; j < k; ++j) {
+    real_type al = alpha, bt = beta;
+    csr_matvec(n, nnz, ia, ja, a, B + j * n, C + j * n, &al, &bt, kind);
+  }
+#elif HIP
+  hip_csrmm(n, k, nnz, ia, ja, a, B, C, alpha, beta, kind);
+#endif
+}
+
+void gemm(const char *transA,
+          const char *transB,
+          const int m,
+          const int n,
+          const int k,
+          const real_type *alpha,
+          const real_type *A,
+          const int lda,
+          const real_type *B,
+          const int ldb,
+          const real_type *beta,
+          real_type *C,
+          const int ldc) {
+#if NOACC
+  simple_gemm(transA, transB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#elif CUDA
+  cuda_gemm(transA, transB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#elif OPENMP
+  openmp_gemm(transA, transB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#elif HIP
+  hip_gemm(transA, transB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+#endif
+}
+
+void dsygv(const int n,
+           real_type *A,
+           real_type *B,
+           real_type *w,
+           real_type *eigvecs) {
+#if NOACC
+  simple_dsygv(n, A, B, w, eigvecs);
+#elif CUDA
+  cuda_dsygv(n, A, B, w, eigvecs);
+#elif OPENMP
+  openmp_dsygv(n, A, B, w, eigvecs);
+#elif HIP
+  hip_dsygv(n, A, B, w, eigvecs);
+#endif
+}
+
+void dsyev(const int n,
+           real_type *A,
+           real_type *w,
+           real_type *eigvecs) {
+#if NOACC
+  simple_dsyev(n, A, w, eigvecs);
+#elif CUDA
+  cuda_dsyev(n, A, w, eigvecs);
+#elif OPENMP
+  openmp_dsyev(n, A, w, eigvecs);
+#elif HIP
+  hip_dsyev(n, A, w, eigvecs);
+#endif
+}
+
+real_type nrm2(const int n, const real_type *v) {
+#if NOACC
+  return simple_nrm2(n, v);
+#elif CUDA
+  return cuda_nrm2(n, v);
+#elif OPENMP
+  return openmp_nrm2(n, v);
+#elif HIP
+  return hip_nrm2(n, v);
+#endif
+}
+
+void vec_set(const int n, real_type value, real_type *vec) {
+#if NOACC
+  simple_vec_set(n, value, vec);
+#elif CUDA
+  cuda_vec_set(n, value, vec);
+#elif OPENMP
+  openmp_vec_set(n, value, vec);
+#elif HIP
+  hip_vec_set(n, value, vec);
+#endif
+}
+
+void compute_col_norms_batched(int n, int k, const real_type *V, real_type *norms) {
+#if NOACC || OPENMP
+  /* Fallback: compute each norm individually */
+  for (int j = 0; j < k; ++j) {
+    const real_type *col = V + j * n;
+    real_type sum = 0.0;
+    for (int i = 0; i < n; ++i) {
+      sum += col[i] * col[i];
+    }
+    norms[j] = sqrt(sum);
+  }
+#elif CUDA
+  /* TODO: implement CUDA batched version */
+  for (int j = 0; j < k; ++j) {
+    norms[j] = cuda_nrm2(n, V + j * n);
+  }
+#elif HIP
+  hip_compute_col_norms_batched(n, k, V, norms);
+#endif
+}
+
+void nrm2_batched(int n, int k, const real_type *V, real_type *norms) {
+#if NOACC || OPENMP
+  /* Fallback: compute each norm individually */
+  for (int j = 0; j < k; ++j) {
+    const real_type *col = V + j * n;
+    real_type sum = 0.0;
+    for (int i = 0; i < n; ++i) {
+      sum += col[i] * col[i];
+    }
+    norms[j] = sqrt(sum);
+  }
+#elif CUDA
+  /* TODO: implement CUDA batched version */
+  for (int j = 0; j < k; ++j) {
+    norms[j] = cuda_nrm2(n, V + j * n);
+  }
+#elif HIP
+  hip_nrm2_batched(n, k, V, norms);
+#endif
+}
+
+int cholesky_qr(int n, int k, real_type *V) {
+#if HIP
+  return hip_cholesky_qr(n, k, V);
+#else
+  /* No batched version available - caller should use CGS2 */
+  return -1;
+#endif
+}
+
+int tsqr(int n, int k, real_type *V) {
+#if HIP
+  return hip_tsqr(n, k, V);
+#else
+  /* No TSQR available - caller should use CGS2 */
+  return -1;
+#endif
+}
+
+void cgs2_device(int n, int k, real_type *V, real_type eps) {
+#if HIP
+  hip_cgs2_device(n, k, V, eps);
+#else
+  /* Fallback not implemented - caller should use regular CGS2 */
 #endif
 }

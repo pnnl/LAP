@@ -163,6 +163,48 @@ void openmp_vec_zero(const int n, real_type *vec)
   }
 }
 
+void openmp_gemv(const char *T,
+                 const int m,
+                 const int n,
+                 const double *alpha,
+                 const double *A,
+                 const int lda,
+                 const double *x,
+                 const double *beta,
+                 double *y)
+{
+  /* y = alpha * A * x + beta * y (or A^T if T == "T") */
+  int i, j;
+  double a = *alpha;
+  double b = *beta;
+  
+  if (T[0] == 'T' || T[0] == 't') {
+    /* Transpose case: y = alpha * A^T * x + beta * y */
+    /* A is m x n, A^T is n x m, x is m-vector, y is n-vector */
+    #pragma omp parallel for schedule(static)
+    for (j = 0; j < n; ++j) {
+      double sum = 0.0;
+      #pragma omp simd reduction(+:sum)
+      for (i = 0; i < m; ++i) {
+        sum += A[i + j * lda] * x[i];
+      }
+      y[j] = a * sum + b * y[j];
+    }
+  } else {
+    /* Non-transpose case: y = alpha * A * x + beta * y */
+    /* A is m x n, x is n-vector, y is m-vector */
+    #pragma omp parallel for schedule(static)
+    for (i = 0; i < m; ++i) {
+      double sum = 0.0;
+      #pragma omp simd reduction(+:sum)
+      for (j = 0; j < n; ++j) {
+        sum += A[i + j * lda] * x[j];
+      }
+      y[i] = a * sum + b * y[i];
+    }
+  }
+}
+
 real_type openmp_dot(const int n, const real_type *v, const real_type *w)
 {
   real_type sum = 0.0;
@@ -260,4 +302,252 @@ void openmp_ichol(const int *ia,
     }
     y[i] /= ua[uia[i]]; /*divide by the diagonal entry*/
   }
+}
+
+/* GEMM: C = alpha * op(A) * op(B) + beta * C */
+void openmp_gemm(const char *transA,
+                 const char *transB,
+                 const int m,
+                 const int n,
+                 const int k,
+                 const real_type *alpha,
+                 const real_type *A,
+                 const int lda,
+                 const real_type *B,
+                 const int ldb,
+                 const real_type *beta,
+                 real_type *C,
+                 const int ldc) {
+  real_type a = *alpha;
+  real_type b = *beta;
+  int ta = (transA[0] == 'T' || transA[0] == 't') ? 1 : 0;
+  int tb = (transB[0] == 'T' || transB[0] == 't') ? 1 : 0;
+  int i, j, l;
+  
+  #pragma omp parallel for private(i, l) schedule(static)
+  for (j = 0; j < n; ++j) {
+    for (i = 0; i < m; ++i) {
+      real_type sum = 0.0;
+      #pragma omp simd reduction(+:sum)
+      for (l = 0; l < k; ++l) {
+        real_type aval = ta ? A[l + i * lda] : A[i + l * lda];
+        real_type bval = tb ? B[j + l * ldb] : B[l + j * ldb];
+        sum += aval * bval;
+      }
+      C[i + j * ldc] = a * sum + b * C[i + j * ldc];
+    }
+  }
+}
+
+/* Vector 2-norm */
+real_type openmp_nrm2(const int n, const real_type *v) {
+  real_type sum = 0.0;
+  int i;
+  #pragma omp parallel for reduction(+:sum)
+  for (i = 0; i < n; ++i) {
+    sum += v[i] * v[i];
+  }
+  return sqrt(sum);
+}
+
+/* Set vector elements to value */
+void openmp_vec_set(const int n, real_type value, real_type *vec) {
+  int i;
+  #pragma omp parallel for
+  for (i = 0; i < n; ++i) {
+    vec[i] = value;
+  }
+}
+
+/* 
+ * Jacobi eigenvalue algorithm for symmetric matrices
+ */
+static void openmp_jacobi_eigen(int n, real_type *A, real_type *w, real_type *V) {
+  int max_iter = 100 * n * n;
+  real_type eps = 1e-14;
+  
+  /* Initialize V to identity */
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      V[i + j * n] = (i == j) ? 1.0 : 0.0;
+    }
+  }
+  
+  real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
+  for (int i = 0; i < n * n; ++i) {
+    Acopy[i] = A[i];
+  }
+  
+  for (int iter = 0; iter < max_iter; ++iter) {
+    int p = 0, q = 1;
+    real_type max_val = 0.0;
+    for (int i = 0; i < n; ++i) {
+      for (int j = i + 1; j < n; ++j) {
+        real_type absval = fabs(Acopy[i + j * n]);
+        if (absval > max_val) {
+          max_val = absval;
+          p = i;
+          q = j;
+        }
+      }
+    }
+    
+    if (max_val < eps) break;
+    
+    real_type app = Acopy[p + p * n];
+    real_type aqq = Acopy[q + q * n];
+    real_type apq = Acopy[p + q * n];
+    
+    real_type theta = 0.5 * atan2(2.0 * apq, aqq - app);
+    real_type c = cos(theta);
+    real_type s = sin(theta);
+    
+    for (int i = 0; i < n; ++i) {
+      if (i != p && i != q) {
+        real_type aip = Acopy[i + p * n];
+        real_type aiq = Acopy[i + q * n];
+        Acopy[i + p * n] = c * aip - s * aiq;
+        Acopy[p + i * n] = Acopy[i + p * n];
+        Acopy[i + q * n] = s * aip + c * aiq;
+        Acopy[q + i * n] = Acopy[i + q * n];
+      }
+    }
+    Acopy[p + p * n] = c * c * app - 2.0 * s * c * apq + s * s * aqq;
+    Acopy[q + q * n] = s * s * app + 2.0 * s * c * apq + c * c * aqq;
+    Acopy[p + q * n] = 0.0;
+    Acopy[q + p * n] = 0.0;
+    
+    for (int i = 0; i < n; ++i) {
+      real_type vip = V[i + p * n];
+      real_type viq = V[i + q * n];
+      V[i + p * n] = c * vip - s * viq;
+      V[i + q * n] = s * vip + c * viq;
+    }
+  }
+  
+  for (int i = 0; i < n; ++i) {
+    w[i] = Acopy[i + i * n];
+  }
+  
+  /* Sort */
+  for (int i = 0; i < n - 1; ++i) {
+    int min_idx = i;
+    for (int j = i + 1; j < n; ++j) {
+      if (w[j] < w[min_idx]) min_idx = j;
+    }
+    if (min_idx != i) {
+      real_type tmp = w[i];
+      w[i] = w[min_idx];
+      w[min_idx] = tmp;
+      for (int k = 0; k < n; ++k) {
+        tmp = V[k + i * n];
+        V[k + i * n] = V[k + min_idx * n];
+        V[k + min_idx * n] = tmp;
+      }
+    }
+  }
+  
+  free(Acopy);
+}
+
+static int openmp_cholesky(int n, real_type *A) {
+  for (int j = 0; j < n; ++j) {
+    real_type sum = A[j + j * n];
+    for (int k = 0; k < j; ++k) {
+      sum -= A[j + k * n] * A[j + k * n];
+    }
+    if (sum <= 0.0) return -1;
+    A[j + j * n] = sqrt(sum);
+    
+    for (int i = j + 1; i < n; ++i) {
+      sum = A[i + j * n];
+      for (int k = 0; k < j; ++k) {
+        sum -= A[i + k * n] * A[j + k * n];
+      }
+      A[i + j * n] = sum / A[j + j * n];
+    }
+  }
+  return 0;
+}
+
+/* Standard symmetric eigenvalue problem */
+void openmp_dsyev(const int n,
+                  real_type *A,
+                  real_type *w,
+                  real_type *eigvecs) {
+  openmp_jacobi_eigen(n, A, w, eigvecs);
+}
+
+/* Generalized symmetric eigenvalue problem: A*x = lambda*B*x */
+void openmp_dsygv(const int n,
+                  real_type *A,
+                  real_type *B,
+                  real_type *w,
+                  real_type *eigvecs) {
+  
+  real_type *Bcopy = (real_type*) malloc(n * n * sizeof(real_type));
+  real_type *Acopy = (real_type*) malloc(n * n * sizeof(real_type));
+  real_type *C = (real_type*) malloc(n * n * sizeof(real_type));
+  
+  for (int i = 0; i < n * n; ++i) {
+    Bcopy[i] = B[i];
+    Acopy[i] = A[i];
+  }
+  
+  int ret = openmp_cholesky(n, Bcopy);
+  if (ret != 0) {
+    fprintf(stderr, "Warning: Cholesky failed in openmp_dsygv. Using regularization.\n");
+    for (int i = 0; i < n; ++i) {
+      Bcopy[i + i * n] = B[i + i * n] + 1e-10;
+    }
+    openmp_cholesky(n, Bcopy);
+  }
+  
+  /* Compute C = L^{-1} * A */
+  for (int j = 0; j < n; ++j) {
+    for (int i = 0; i < n; ++i) {
+      real_type sum = Acopy[i + j * n];
+      for (int k = 0; k < i; ++k) {
+        sum -= Bcopy[i + k * n] * C[k + j * n];
+      }
+      C[i + j * n] = sum / Bcopy[i + i * n];
+    }
+  }
+  
+  /* Compute Acopy = C * L^{-T} */
+  for (int j = 0; j < n; ++j) {
+    for (int i = n - 1; i >= 0; --i) {
+      real_type sum = C[j + i * n];
+      for (int k = i + 1; k < n; ++k) {
+        sum -= Bcopy[k + i * n] * Acopy[j + k * n];
+      }
+      Acopy[j + i * n] = sum / Bcopy[i + i * n];
+    }
+  }
+  
+  /* Symmetrize */
+  for (int i = 0; i < n; ++i) {
+    for (int j = i + 1; j < n; ++j) {
+      real_type avg = 0.5 * (Acopy[i + j * n] + Acopy[j + i * n]);
+      Acopy[i + j * n] = avg;
+      Acopy[j + i * n] = avg;
+    }
+  }
+  
+  openmp_jacobi_eigen(n, Acopy, w, eigvecs);
+  
+  /* Back-transform eigenvectors */
+  for (int k = 0; k < n; ++k) {
+    for (int i = n - 1; i >= 0; --i) {
+      real_type sum = eigvecs[i + k * n];
+      for (int j = i + 1; j < n; ++j) {
+        sum -= Bcopy[j + i * n] * eigvecs[j + k * n];
+      }
+      eigvecs[i + k * n] = sum / Bcopy[i + i * n];
+    }
+  }
+  
+  free(Bcopy);
+  free(Acopy);
+  free(C);
 }
