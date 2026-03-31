@@ -240,7 +240,8 @@ $(BUILD_DIR)/hip_blas.o: $(HIP_DIR)/hip_blas.cpp
 $(BUILD_DIR)/devMem.o: $(HIP_DIR)/devMem.cpp
 	$(COMPILE_CPP)
 
-# Compile CUDA backend files (if needed)
+# Compile CUDA backend files
+# Note: devMem.cpp supports both CUDA and HIP via preprocessor
 ifeq ($(BACKEND),cuda)
 $(BUILD_DIR)/cuda_blas.o: $(CUDA_DIR)/cuda_blas.cu
 	$(COMPILE_CPP)
