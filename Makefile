@@ -124,7 +124,7 @@ else ifeq ($(BACKEND),hip)
 
 else ifeq ($(BACKEND),openmp)
     # --------------------------------------------------------------------------
-    # OpenMP Backend (CPU with OpenMP)
+    # OpenMP Backend (CPU with OpenMP - no GPU offloading)
     # --------------------------------------------------------------------------
     CONF_FLAGS := -DV100=0 -DNOACC=0 -DCUDA=0 -DOPENMP=1 -DHIP=0 -DUSE_FP64=1
     
@@ -141,6 +141,33 @@ else ifeq ($(BACKEND),openmp)
     
     define LINK
 		$(CC) $(CONF_FLAGS) $(OMP_FLAGS) -o $@ $^ $(LIBS) $(OMP_LIBS)
+    endef
+
+else ifeq ($(BACKEND),openmp_offload)
+    # --------------------------------------------------------------------------
+    # OpenMP Offload Backend (AMD GPU via OpenMP target offloading)
+    # --------------------------------------------------------------------------
+    # Requires: ROCm with amdclang
+    # GPU architecture: gfx942 = MI300X, gfx90a = MI250X, gfx908 = MI100
+    AMD_GPU_ARCH ?= gfx942
+    
+    CONF_FLAGS := -DV100=0 -DNOACC=0 -DCUDA=0 -DOPENMP=1 -DHIP=0 -DUSE_FP64=1 -DOMP_OFFLOAD=1
+    
+    AMDCLANG := $(ROCM_PATH)/bin/amdclang
+    INCLUDES += -I$(OMP_DIR)
+    OMP_OFFLOAD_FLAGS := -fopenmp -fopenmp-targets=amdgcn-amd-amdhsa \
+                         -Xopenmp-target=amdgcn-amd-amdhsa -march=$(AMD_GPU_ARCH)
+    OMP_LIBS := -L$(ROCM_PATH)/lib -lamdhip64
+    
+    BACKEND_OBJS := $(BUILD_DIR)/openmp_blas.o $(BUILD_DIR)/devMem_cpu.o
+    EXE_PREFIX   := lap_omp_offload
+    
+    define COMPILE_C
+		$(AMDCLANG) $(CONF_FLAGS) $(INCLUDES) $(OPT_FLAGS) $(OMP_OFFLOAD_FLAGS) -o $@ -c $<
+    endef
+    
+    define LINK
+		$(AMDCLANG) $(OMP_OFFLOAD_FLAGS) -o $@ $^ $(LIBS) $(OMP_LIBS)
     endef
 
 else ifeq ($(BACKEND),noacc)
@@ -163,7 +190,7 @@ else ifeq ($(BACKEND),noacc)
     endef
 
 else
-    $(error Unknown BACKEND: $(BACKEND). Valid options: cuda, hip, openmp, noacc)
+    $(error Unknown BACKEND: $(BACKEND). Valid options: cuda, hip, openmp, openmp_offload, noacc)
 endif
 
 # ==============================================================================
@@ -175,7 +202,8 @@ CORE_OBJS := $(BUILD_DIR)/blas.o $(BUILD_DIR)/GS.o \
              $(BUILD_DIR)/cg.o $(BUILD_DIR)/io_utils.o
 
 # simple_blas.o is only needed for backends that don't have their own blas implementation
-ifeq ($(BACKEND),openmp)
+# OpenMP backends have their own blas in openmp_blas.o
+ifneq (,$(filter $(BACKEND),openmp openmp_offload))
     COMMON_OBJS := $(CORE_OBJS)
 else
     COMMON_OBJS := $(BUILD_DIR)/simple_blas.o $(CORE_OBJS)
@@ -269,6 +297,7 @@ clean:
 	rm -f lap_cuda_laplacian lap_cuda_cg lap_cuda_spmv lap_cuda_lobpcg
 	rm -f lap_hip_laplacian lap_hip_cg lap_hip_spmv lap_hip_lobpcg
 	rm -f lap_openmp_laplacian lap_openmp_cg lap_openmp_spmv lap_openmp_lobpcg
+	rm -f lap_omp_offload_laplacian lap_omp_offload_cg lap_omp_offload_spmv lap_omp_offload_lobpcg
 	rm -f lap_cpu_laplacian lap_cpu_cg lap_cpu_spmv lap_cpu_lobpcg
 
 # ==============================================================================
