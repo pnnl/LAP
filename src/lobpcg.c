@@ -932,16 +932,21 @@ void lobpcg(int n,
     }
     if (min_idx != i) {
       /* Swap eigenvalues */
-      real_type tmp = lambda[i];
+      real_type tmp_lambda = lambda[i];
       lambda[i] = lambda[min_idx];
-      lambda[min_idx] = tmp;
+      lambda[min_idx] = tmp_lambda;
       
-      /* Swap eigenvector columns */
-      for (int row = 0; row < n; ++row) {
-        tmp = X[i * n + row];
-        X[i * n + row] = X[min_idx * n + row];
-        X[min_idx * n + row] = tmp;
-      }
+      /* Swap eigenvector columns using device-safe vec_copy */
+      /* Use d_temp/temp as swap buffer (already allocated) */
+#if (CUDA || HIP)
+      vec_copy(n, X + i * n, d_temp);              /* temp = X[:,i] */
+      vec_copy(n, X + min_idx * n, X + i * n);     /* X[:,i] = X[:,min_idx] */
+      vec_copy(n, d_temp, X + min_idx * n);        /* X[:,min_idx] = temp */
+#else
+      vec_copy(n, X + i * n, temp);
+      vec_copy(n, X + min_idx * n, X + i * n);
+      vec_copy(n, temp, X + min_idx * n);
+#endif
     }
   }
   
