@@ -1,0 +1,14 @@
+# Build artifacts
+build/
+*.o
+
+# Executables
+lap_*
+
+# Results/logs
+*.txt
+
+# Editor files
+*~
+*.swp
+.vscode/
