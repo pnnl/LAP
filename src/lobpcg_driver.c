@@ -524,30 +524,30 @@ int main(int argc, char *argv[]) {
   free(res_history);
   
 #if (CUDA || HIP)
-  freeDevice(d_X);
-  freeDevice(d_d);
-  freeDevice(d_A_ia);
-  freeDevice(d_A_ja);
-  freeDevice(d_A_a);
-  freeDevice(prec_data->lia);
-  freeDevice(prec_data->lja);
-  freeDevice(prec_data->la);
-  freeDevice(prec_data->uia);
-  freeDevice(prec_data->uja);
-  freeDevice(prec_data->ua);
-  freeDevice(prec_data->d_r);
-  freeDevice(prec_data->aux_vec1);
-  freeDevice(prec_data->aux_vec2);
-  freeDevice(prec_data->aux_vec3);
+  if (d_X) freeDevice(d_X);
+  if (d_d) freeDevice(d_d);
+  if (d_A_ia) freeDevice(d_A_ia);
+  if (d_A_ja) freeDevice(d_A_ja);
+  if (d_A_a) freeDevice(d_A_a);
+  if (prec_data->lia) freeDevice(prec_data->lia);
+  if (prec_data->lja) freeDevice(prec_data->lja);
+  if (prec_data->la) freeDevice(prec_data->la);
+  if (prec_data->uia) freeDevice(prec_data->uia);
+  if (prec_data->uja) freeDevice(prec_data->uja);
+  if (prec_data->ua) freeDevice(prec_data->ua);
+  if (prec_data->d_r) freeDevice(prec_data->d_r);
+  if (prec_data->aux_vec1) freeDevice(prec_data->aux_vec1);
+  if (prec_data->aux_vec2) freeDevice(prec_data->aux_vec2);
+  if (prec_data->aux_vec3) freeDevice(prec_data->aux_vec3);
   
   /* Free ichol_vals if it was allocated */
-  if (strcmp(prec_data->prec_op, "ichol") == 0) {
+  if (strcmp(prec_data->prec_op, "ichol") == 0 && prec_data->ichol_vals) {
     freeDevice(prec_data->ichol_vals);
   }
   
-  free(h_A_ia);
-  free(h_A_ja);
-  free(h_A_a);
+  if (h_A_ia) free(h_A_ia);
+  if (h_A_ja) free(h_A_ja);
+  if (h_A_a) free(h_A_a);
 #else
   free(X);
   free(prec_data->d);
