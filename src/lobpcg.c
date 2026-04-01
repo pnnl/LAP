@@ -1028,46 +1028,46 @@ void lobpcg(int n,
   
   /* Cleanup */
 #if (CUDA || HIP)
-  freeDevice(d_AX);
-  freeDevice(d_W);
-  freeDevice(d_P);
-  freeDevice(d_R);
-  freeDevice(d_X_lock);
-  freeDevice(d_S);
-  freeDevice(d_AS_temp);
-  freeDevice(d_Xnew);
-  freeDevice(d_Pnew);
-  freeDevice(d_temp);
-  freeDevice(d_AS_rr);
-  freeDevice(d_BS_rr);
+  if (d_AX) freeDevice(d_AX);
+  if (d_W) freeDevice(d_W);
+  if (d_P) freeDevice(d_P);
+  if (d_R) freeDevice(d_R);
+  if (d_X_lock) freeDevice(d_X_lock);
+  if (d_S) freeDevice(d_S);
+  if (d_AS_temp) freeDevice(d_AS_temp);
+  if (d_Xnew) freeDevice(d_Xnew);
+  if (d_Pnew) freeDevice(d_Pnew);
+  if (d_temp) freeDevice(d_temp);
+  if (d_AS_rr) freeDevice(d_AS_rr);
+  if (d_BS_rr) freeDevice(d_BS_rr);
 #else
-  free(AX);
-  free(W);
-  free(P);
-  free(R);
-  free(X_lock);
-  free(S);
-  free(AS_temp);
-  free(Xnew);
-  free(Pnew);
-  free(temp);
+  if (AX) free(AX);
+  if (W) free(W);
+  if (P) free(P);
+  if (R) free(R);
+  if (X_lock) free(X_lock);
+  if (S) free(S);
+  if (AS_temp) free(AS_temp);
+  if (Xnew) free(Xnew);
+  if (Pnew) free(Pnew);
+  if (temp) free(temp);
 #endif
   
-  free(h_AS);
-  free(h_BS);
-  free(h_Y);
-  free(h_theta);
-  free(h_Lambda);
-  free(h_res_norms);
-  free(h_lambda);
-  free(locked);
-  free(h_orth_coeff);
-  free(h_Y_small);
-  free(h_lock_coeff);
+  if (h_AS) free(h_AS);
+  if (h_BS) free(h_BS);
+  if (h_Y) free(h_Y);
+  if (h_theta) free(h_theta);
+  if (h_Lambda) free(h_Lambda);
+  if (h_res_norms) free(h_res_norms);
+  if (h_lambda) free(h_lambda);
+  if (locked) free(locked);
+  if (h_orth_coeff) free(h_orth_coeff);
+  if (h_Y_small) free(h_Y_small);
+  if (h_lock_coeff) free(h_lock_coeff);
   cgs2_workspace_free(cgs2_ws);
 #if (CUDA || HIP)
-  freeDevice(d_orth_coeff);
-  freeDevice(d_Y_small);
-  freeDevice(d_lock_coeff);
+  if (d_orth_coeff) freeDevice(d_orth_coeff);
+  if (d_Y_small) freeDevice(d_Y_small);
+  if (d_lock_coeff) freeDevice(d_lock_coeff);
 #endif
 }
