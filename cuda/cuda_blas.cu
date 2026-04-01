@@ -1,5 +1,5 @@
 #include "cublas_v2.h"
-
+#include <curand.h>
 #include <cusparse.h> 
 #include "cuda_blas.h"
 #if USE_FP64
@@ -654,5 +654,14 @@ void cuda_dsygv(const int n,
   
   free(L);
   free(C);
+}
+
+void cuda_generate_random_vectors(real_type *d_vec, int64_t n, int nev, unsigned long long seed) {
+  curandGenerator_t gen;
+  curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_XORWOW);
+  curandSetPseudoRandomGeneratorSeed(gen, seed);
+  curandGenerateUniformDouble(gen, d_vec, n * nev);
+  curandDestroyGenerator(gen);
+  cudaDeviceSynchronize();
 }
 

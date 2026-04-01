@@ -251,9 +251,13 @@ int main(int argc, char *argv[]) {
     memcpyDevice(d_X, h_X, A->n * nev, sizeof(real_type), "H2D");
     free(h_X);
   } else {
-    /* Generate random vectors directly on GPU using hiprand */
+    /* Generate random vectors directly on GPU */
     /* This matches CG_experiments behavior for reproducibility */
+#if HIP
     hip_generate_random_vectors(d_X, A->n, nev, (unsigned long long)random_seed);
+#elif CUDA
+    cuda_generate_random_vectors(d_X, A->n, nev, (unsigned long long)random_seed);
+#endif
     
     /* Debug: verify random vectors are deterministic */
     if (verbose) {

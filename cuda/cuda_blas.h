@@ -142,6 +142,9 @@ real_type cuda_nrm2(const int n, const real_type *v);
 /* Set vector elements to value */
 void cuda_vec_set(const int n, real_type value, real_type *vec);
 
+/* Generate random vectors on GPU */
+void cuda_generate_random_vectors(real_type *d_vec, int64_t n, int nev, unsigned long long seed);
+
 #ifdef __cplusplus
 }
 #endif

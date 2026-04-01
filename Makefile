@@ -80,7 +80,7 @@ ifeq ($(BACKEND),cuda)
     INCLUDES += -I$(CUDA_DIR)
     NVCC_FLAGS   := -arch=$(CUDA_ARCH)
     CPP_FLAGS    := -x cu
-    CUDA_LIBS    := -lcusparse -lcublas
+    CUDA_LIBS    := -lcusparse -lcublas -lcurand
     
     BACKEND_OBJS := $(BUILD_DIR)/cuda_blas.o $(BUILD_DIR)/devMem.o
     EXE_PREFIX   := lap_cuda
