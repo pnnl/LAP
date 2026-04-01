@@ -13,16 +13,17 @@ static cusparseHandle_t handle_cusparse;
 static void *mv_buffer;
 static void *L_buffer;
 static void *U_buffer;
-static void *ichol_buffer; // in ichol, we can get away with one buffer
 
 static cusparseSpMatDescr_t matA = NULL;
-static cusparseSpMatDescr_t matL;
-static cusparseSpMatDescr_t matU;
-static cusparseMatDescr_t descrL, descrU, descrLt, descrM; // last two are used only for incomplete CHolesky
-static  csrsv2Info_t infoL, infoU, infoLt;
-csric02Info_t infoM  = 0; // used only for Incomplete Cholesky
+static cusparseSpMatDescr_t matL = NULL;
+static cusparseSpMatDescr_t matU = NULL;
 
-#define policy CUSPARSE_SOLVE_POLICY_USE_LEVEL 
+static cusparseSpSVDescr_t spsvDescrL = NULL;
+static cusparseSpSVDescr_t spsvDescrU = NULL;
+
+static cusparseDnVecDescr_t vecTmpIn = NULL;
+static cusparseDnVecDescr_t vecTmpOut = NULL;
+static int vecTmpSize = 0; 
 
 
 void initialize_handles(){
@@ -105,121 +106,58 @@ void initialize_and_analyze_L_and_U_solve(const int n,
                                           int *uia, 
                                           int *uja, 
                                           real_type *ua){
+  cusparseStatus_t status;
+  size_t L_buffer_size, U_buffer_size;
+  real_type one = 1.0;
+  cusparseFillMode_t fillLower = CUSPARSE_FILL_MODE_LOWER;
+  cusparseFillMode_t fillUpper = CUSPARSE_FILL_MODE_UPPER;
+  cusparseDiagType_t diagNonUnit = CUSPARSE_DIAG_TYPE_NON_UNIT;
 
-  cusparseCreateMatDescr(&(descrL));
-  cusparseSetMatIndexBase(descrL, CUSPARSE_INDEX_BASE_ZERO);
-  cusparseSetMatFillMode(descrL, CUSPARSE_FILL_MODE_LOWER);
+  cusparseCreateCsr(&matL, n, n, nnzL, lia, lja, la,
+                    CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                    CUSPARSE_INDEX_BASE_ZERO, cuda_data_type);
+  cusparseSpMatSetAttribute(matL, CUSPARSE_SPMAT_FILL_MODE,
+                            &fillLower, sizeof(cusparseFillMode_t));
+  cusparseSpMatSetAttribute(matL, CUSPARSE_SPMAT_DIAG_TYPE,
+                            &diagNonUnit, sizeof(cusparseDiagType_t));
 
-  cusparseCreateMatDescr(&(descrU));
-  cusparseSetMatIndexBase(descrU, CUSPARSE_INDEX_BASE_ZERO);
-  cusparseSetMatFillMode(descrU, CUSPARSE_FILL_MODE_UPPER);
-  cusparseCreateCsrsv2Info(&infoL);
-  cusparseCreateCsrsv2Info(&infoU);
-  int L_buffer_size;  
-  int U_buffer_size;  
-#if USE_FP64 // it is double 
-    cusparseDcsrsv2_bufferSize(handle_cusparse, 
-                               CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                               n, 
-                               nnzL, 
-                               descrL,
-                               la, 
-                               lia, 
-                               lja,
-                               infoL, 
-                               &L_buffer_size);
-    //printf("buffer size L %d\n", L_buffer_size);
-    cudaMalloc((void**)&(L_buffer), L_buffer_size);
+  cusparseCreateCsr(&matU, n, n, nnzU, uia, uja, ua,
+                    CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                    CUSPARSE_INDEX_BASE_ZERO, cuda_data_type);
+  cusparseSpMatSetAttribute(matU, CUSPARSE_SPMAT_FILL_MODE,
+                            &fillUpper, sizeof(cusparseFillMode_t));
+  cusparseSpMatSetAttribute(matU, CUSPARSE_SPMAT_DIAG_TYPE,
+                            &diagNonUnit, sizeof(cusparseDiagType_t));
 
-    cusparseDcsrsv2_bufferSize(handle_cusparse, 
-                               CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                               n, 
-                               nnzU, 
-                               descrU,
-                               ua, 
-                               uia, 
-                               uja,
-                               infoU, 
-                               &U_buffer_size);
-    //printf("buffer size U %d\n", U_buffer_size);
-    cudaMalloc((void**)&(U_buffer), U_buffer_size);
-    cusparseStatus_t status_cusparse;
-    status_cusparse = cusparseDcsrsv2_analysis(handle_cusparse, 
-                                               CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                               n,
-                                               nnzL,
-                                               descrL,
-                                               la,
-                                               lia,
-                                               lja,
-                                               infoL,
-                                               policy, 
-                                               L_buffer);
+  if (vecTmpSize < n) {
+    real_type *tmpBuf;
+    cudaMalloc(&tmpBuf, n * sizeof(real_type));
+    if (vecTmpIn) cusparseDestroyDnVec(vecTmpIn);
+    if (vecTmpOut) cusparseDestroyDnVec(vecTmpOut);
+    cusparseCreateDnVec(&vecTmpIn, n, tmpBuf, cuda_data_type);
+    real_type *tmpBuf2;
+    cudaMalloc(&tmpBuf2, n * sizeof(real_type));
+    cusparseCreateDnVec(&vecTmpOut, n, tmpBuf2, cuda_data_type);
+    vecTmpSize = n;
+  }
 
-    status_cusparse = cusparseDcsrsv2_analysis(handle_cusparse, 
-                                               CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                               n,
-                                               nnzU,
-                                               descrU,
-                                               ua,
-                                               uia,
-                                               uja,
-                                               infoU,
-                                               policy, 
-                                               U_buffer);
-#else    
-// it is 4 bytes so SINGLE
+  cusparseSpSV_createDescr(&spsvDescrL);
+  status = cusparseSpSV_bufferSize(handle_cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                   &one, matL, vecTmpIn, vecTmpOut, cuda_data_type,
+                                   CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL, &L_buffer_size);
+  cudaMalloc(&L_buffer, L_buffer_size);
+  status = cusparseSpSV_analysis(handle_cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                 &one, matL, vecTmpIn, vecTmpOut, cuda_data_type,
+                                 CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL, L_buffer);
 
-    cusparseScsrsv2_bufferSize(handle_cusparse, 
-                               CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                               n, 
-                               nnzL, 
-                               descrL,
-                               la, 
-                               lia, 
-                               lja,
-                               infoL, 
-                               &L_buffer_size);
-    //printf("buffer size L %d\n", L_buffer_size);
-    cudaMalloc((void**)&(L_buffer), L_buffer_size);
-
-    cusparseScsrsv2_bufferSize(handle_cusparse, 
-                               CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                               n, 
-                               nnzU, 
-                               descrU,
-                               ua, 
-                               uia, 
-                               uja,
-                               infoU, 
-                               &U_buffer_size);
-    //printf("buffer size U %d\n", U_buffer_size);
-    cudaMalloc((void**)&(U_buffer), U_buffer_size);
-    cusparseStatus_t status_cusparse;
-    status_cusparse = cusparseScsrsv2_analysis(handle_cusparse, 
-                                               CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                               n,
-                                               nnzL,
-                                               descrL,
-                                               la,
-                                               lia,
-                                               lja,
-                                               infoL,
-                                               policy, 
-                                               L_buffer);
-
-    status_cusparse = cusparseScsrsv2_analysis(handle_cusparse, 
-                                               CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                               n,
-                                               nnzU,
-                                               descrU,
-                                               ua,
-                                               uia,
-                                               uja,
-                                               infoU,
-                                               policy, 
-                                               U_buffer);
-#endif
+  cusparseSpSV_createDescr(&spsvDescrU);
+  status = cusparseSpSV_bufferSize(handle_cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                   &one, matU, vecTmpIn, vecTmpOut, cuda_data_type,
+                                   CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU, &U_buffer_size);
+  cudaMalloc(&U_buffer, U_buffer_size);
+  status = cusparseSpSV_analysis(handle_cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                 &one, matU, vecTmpIn, vecTmpOut, cuda_data_type,
+                                 CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU, U_buffer);
 }
 
 
@@ -232,30 +170,8 @@ void initialize_L_and_U_descriptors(const int n,
                                     int *uia, 
                                     int *uja, 
                                     real_type *ua){
-
-    cusparseCreateCsr(&matL,
-                      n,
-                      n,
-                      nnzL,
-                      lia,
-                      lja,
-                      la,
-                      CUSPARSE_INDEX_32I,
-                      CUSPARSE_INDEX_32I,
-                      CUSPARSE_INDEX_BASE_ZERO,
-                       cuda_data_type);
-
-    cusparseCreateCsr(&matU,
-                      n,
-                      n,
-                      nnzU,
-                      uia,
-                      uja,
-                      ua,
-                      CUSPARSE_INDEX_32I,
-                      CUSPARSE_INDEX_32I,
-                      CUSPARSE_INDEX_BASE_ZERO,
-                       cuda_data_type);
+    // Matrix descriptors are now created in initialize_and_analyze_L_and_U_solve
+    // This function is kept for API compatibility
 }
 
 void initialize_ichol(const int n, 
@@ -264,226 +180,9 @@ void initialize_ichol(const int n,
                       int *ja, 
                       real_type *a)
 {
-
-  printf("initializing ICHOL \n");
-  cusparseCreateMatDescr(&descrM);
-  cusparseSetMatIndexBase(descrM, CUSPARSE_INDEX_BASE_ZERO);
-  cusparseSetMatType(descrM, CUSPARSE_MATRIX_TYPE_GENERAL);
-
-  cusparseCreateMatDescr(&descrL);
-  cusparseSetMatIndexBase(descrL, CUSPARSE_INDEX_BASE_ZERO);
-  cusparseSetMatType(descrL, CUSPARSE_MATRIX_TYPE_GENERAL);
-  cusparseSetMatFillMode(descrL, CUSPARSE_FILL_MODE_LOWER);
-  cusparseSetMatDiagType(descrL, CUSPARSE_DIAG_TYPE_NON_UNIT);
-
-  cusparseCreateCsric02Info(&infoM);
-  cusparseCreateCsrsv2Info(&infoL);
-  cusparseCreateCsrsv2Info(&infoLt);
-  int structural_zero;
-  int numerical_zero; 
-
-  cusparseStatus_t status_cusparse;
-
-  /* figure out the buffer size */
-
-  int bufferSize, bufferSizeL, bufferSizeLt, bufferSizeM;
-#if USE_FP64 // it is double 
-      status_cusparse =  cusparseDcsric02_bufferSize(handle_cusparse, 
-                                                     n, 
-                                                     nnzA,
-                                                     descrM, 
-                                                     a,
-                                                     ia, 
-                                                     ja, 
-                                                     infoM, 
-                                                     &bufferSizeM);
-
-      status_cusparse =  cusparseDcsrsv2_bufferSize(handle_cusparse, 
-                                                    CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                                                    n, 
-                                                    nnzA,
-                                                    descrL, 
-                                                    a, 
-                                                    ia, 
-                                                    ja, 
-                                                    infoL, 
-                                                    &bufferSizeL);
-
-      status_cusparse =  cusparseDcsrsv2_bufferSize(handle_cusparse, 
-                                                    CUSPARSE_OPERATION_TRANSPOSE, 
-                                                    n, 
-                                                    nnzA,
-                                                    descrL, 
-                                                    a, 
-                                                    ia, 
-                                                    ja, 
-                                                    infoLt, 
-                                                    &bufferSizeLt);
-#else
-
-      status_cusparse =  cusparseScsric02_bufferSize(handle_cusparse, 
-                                                     n, 
-                                                     nnzA,
-                                                     descrM, 
-                                                     a,
-                                                     ia, 
-                                                     ja, 
-                                                     infoM, 
-                                                     &bufferSizeM);
-
-      status_cusparse =  cusparseScsrsv2_bufferSize(handle_cusparse, 
-                                                    CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                                                    n, 
-                                                    nnzA,
-                                                    descrL, 
-                                                    a, 
-                                                    ia, 
-                                                    ja, 
-                                                    infoL, 
-                                                    &bufferSizeL);
-
-      status_cusparse =  cusparseScsrsv2_bufferSize(handle_cusparse, 
-                                                    CUSPARSE_OPERATION_TRANSPOSE, 
-                                                    n, 
-                                                    nnzA,
-                                                    descrL, 
-                                                    a, 
-                                                    ia, 
-                                                    ja, 
-                                                    infoLt, 
-                                                    &bufferSizeLt);
-#endif
-
-  bufferSize = max(bufferSizeM, max(bufferSizeL, bufferSizeLt));
-
-  cudaMalloc((void**) &ichol_buffer, bufferSize);
-
-  /* and now analyze */
-
-#if USE_FP64 // it is double 
-  status_cusparse = cusparseDcsric02_analysis(handle_cusparse,
-                                              n, 
-                                              nnzA, 
-                                              descrM,
-                                              a, 
-                                              ia, 
-                                              ja, 
-                                              infoM,
-                                              policy, 
-                                              ichol_buffer);
-  status_cusparse = cusparseXcsric02_zeroPivot(handle_cusparse, infoM, &structural_zero);
-
-  if (CUSPARSE_STATUS_ZERO_PIVOT == status_cusparse) {
-    printf("We have a problem: A(%d,%d) is missing\n", structural_zero, structural_zero);
-  }
-
-  /* analyze the solves as well */
-
-  status_cusparse = cusparseDcsrsv2_analysis(handle_cusparse, 
-                                             CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                                             n, 
-                                             nnzA, 
-                                             descrL,
-                                             a, 
-                                             ia, 
-                                             ja,
-                                             infoL, 
-                                             policy, 
-                                             ichol_buffer);
-
-  status_cusparse = cusparseDcsrsv2_analysis(handle_cusparse, 
-                                             CUSPARSE_OPERATION_TRANSPOSE, 
-                                             n, 
-                                             nnzA, 
-                                             descrL,
-                                             a, 
-                                             ia, 
-                                             ja,
-                                             infoLt, 
-                                             policy, 
-                                             ichol_buffer);
-
-  /* decompose */
-  status_cusparse = cusparseDcsric02(handle_cusparse, 
-                                     n, 
-                                     nnzA, 
-                                     descrM,
-                                     a, 
-                                     ia, 
-                                     ja, 
-                                     infoM, 
-                                     policy, 
-                                     ichol_buffer);
-
-  status_cusparse = cusparseXcsric02_zeroPivot(handle_cusparse, 
-                                               infoM, 
-                                               &numerical_zero);
-  if (CUSPARSE_STATUS_ZERO_PIVOT == status_cusparse) {
-    printf("We have another problem: L(%d,%d) is zero\n", numerical_zero, numerical_zero);
-  }
-#else
-
-  status_cusparse = cusparseScsric02_analysis(handle_cusparse,
-                                              n, 
-                                              nnzA, 
-                                              descrM,
-                                              a, 
-                                              ia, 
-                                              ja, 
-                                              infoM,
-                                              policy, 
-                                              ichol_buffer);
-  status_cusparse = cusparseXcsric02_zeroPivot(handle_cusparse, infoM, &structural_zero);
-
-  if (CUSPARSE_STATUS_ZERO_PIVOT == status_cusparse) {
-    printf("We have a problem: A(%d,%d) is missing\n", structural_zero, structural_zero);
-  }
-
-  /* analyze the solves as well */
-
-  status_cusparse = cusparseScsrsv2_analysis(handle_cusparse, 
-                                             CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                                             n, 
-                                             nnzA, 
-                                             descrL,
-                                             a, 
-                                             ia, 
-                                             ja,
-                                             infoL, 
-                                             policy, 
-                                             ichol_buffer);
-
-  status_cusparse = cusparseScsrsv2_analysis(handle_cusparse, 
-                                             CUSPARSE_OPERATION_TRANSPOSE, 
-                                             n, 
-                                             nnzA, 
-                                             descrL,
-                                             a, 
-                                             ia, 
-                                             ja,
-                                             infoLt, 
-                                             policy, 
-                                             ichol_buffer);
-
-  /* decompose */
-  status_cusparse = cusparseScsric02(handle_cusparse, 
-                                     n, 
-                                     nnzA, 
-                                     descrM,
-                                     a, 
-                                     ia, 
-                                     ja, 
-                                     infoM, 
-                                     policy, 
-                                     ichol_buffer);
-
-  status_cusparse = cusparseXcsric02_zeroPivot(handle_cusparse, 
-                                               infoM, 
-                                               &numerical_zero);
-  if (CUSPARSE_STATUS_ZERO_PIVOT == status_cusparse) {
-    printf("We have another problem: L(%d,%d) is zero\n", numerical_zero, numerical_zero);
-  }
-#endif
+  fprintf(stderr, "ERROR: Incomplete Cholesky (ichol) preconditioner is not supported in CUDA 12+.\n");
+  fprintf(stderr, "The csric02/csrsv2 APIs were removed. Please use a different preconditioner.\n");
+  exit(1);
 }
 
 
@@ -494,70 +193,8 @@ void cuda_ichol(const int *ia,
                 pdata *prec_data, 
                 real_type *x, 
                 real_type *y) {
-  real_type one = 1.0;
-
-#if USE_FP64 // it is double 
-  cusparseDcsrsv2_solve(handle_cusparse, 
-                        CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                        prec_data->n, 
-                        nnzA, 
-                        &one, 
-                        descrL, // replace with cusparseSpSV
-                        prec_data->ichol_vals, 
-                        ia, 
-                        ja, 
-                        infoL,
-                        x,//input 
-                        prec_data->aux_vec1, //output
-                        policy, 
-                        ichol_buffer);
-
-  /* solve L'*y = aux_vec1 */
-  cusparseDcsrsv2_solve(handle_cusparse, 
-                        CUSPARSE_OPERATION_TRANSPOSE, 
-                        prec_data->n, 
-                        nnzA, &one, 
-                        descrL, // replace with cusparseSpSV
-                        prec_data->ichol_vals, 
-                        ia, 
-                        ja, 
-                        infoLt,
-                        prec_data->aux_vec1, 
-                        y, 
-                        policy, 
-                        ichol_buffer);
-#else //sp
-
-  cusparseScsrsv2_solve(handle_cusparse, 
-                        CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                        prec_data->n, 
-                        nnzA, 
-                        &one, 
-                        descrL, // replace with cusparseSpSV
-                        prec_data->ichol_vals, 
-                        ia, 
-                        ja, 
-                        infoL,
-                        x,//input 
-                        prec_data->aux_vec1, //output
-                        policy, 
-                        ichol_buffer);
-
-  /* solve L'*y = aux_vec1 */
-  cusparseScsrsv2_solve(handle_cusparse, 
-                        CUSPARSE_OPERATION_TRANSPOSE, 
-                        prec_data->n, 
-                        nnzA, &one, 
-                        descrL, // replace with cusparseSpSV
-                        prec_data->ichol_vals, 
-                        ia, 
-                        ja, 
-                        infoLt,
-                        prec_data->aux_vec1, 
-                        y, 
-                        policy, 
-                        ichol_buffer);
-#endif
+  fprintf(stderr, "ERROR: Incomplete Cholesky (ichol) preconditioner is not supported in CUDA 12+.\n");
+  exit(1);
 }
 
 __global__ void cuda_vec_vec_kernel(const int n,
@@ -735,43 +372,17 @@ void cuda_lower_triangular_solve(const int n,
                                  const real_type *la,
                                  const real_type *diagonal, 
                                  const real_type *x, real_type *result){
-  /* compute result = L^{-1}x */
-  /* we DO NOT assume anything about L diagonal */
-  /* d_x3 = L^(-1)dx2 */
-
   real_type one = 1.0;
-#if USE_FP64
-  cusparseStatus_t status = cusparseDcsrsv2_solve(handle_cusparse, 
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                                                  n, 
-                                                  nnzL, 
-                                                  &one, 
-                                                  descrL,
-                                                  la,
-                                                  lia,
-                                                  lja,
-                                                  infoL,
-                                                  x,
-                                                  result,
-                                                  policy,
-                                                  L_buffer);
-  //printf("status after tri solve is %d \n", status);
-#else
-  cusparseStatus_t status = cusparseScsrsv2_solve(handle_cusparse, 
-                                                  CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                                                  n, 
-                                                  nnzL, 
-                                                  &one, 
-                                                  descrL,
-                                                  la,
-                                                  lia,
-                                                  lja,
-                                                  infoL,
-                                                  x,
-                                                  result,
-                                                  policy,
-                                                  L_buffer);
-#endif
+  cusparseDnVecDescr_t vecX, vecY;
+  cusparseCreateDnVec(&vecX, n, (void*)x, cuda_data_type);
+  cusparseCreateDnVec(&vecY, n, (void*)result, cuda_data_type);
+  
+  cusparseSpSV_solve(handle_cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                     &one, matL, vecX, vecY, cuda_data_type,
+                     CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrL);
+  
+  cusparseDestroyDnVec(vecX);
+  cusparseDestroyDnVec(vecY);
 }
 
 
@@ -783,40 +394,17 @@ void cuda_upper_triangular_solve(const int n,
                                  const real_type *diagonal, 
                                  const real_type *x, 
                                  real_type *result){
-
-  /* compute result = U^{-1}x */
   real_type one = 1.0;
-#if USE_FP64 
- cusparseDcsrsv2_solve(handle_cusparse, 
-                        CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                        n, 
-                        nnzU, 
-                        &one, 
-                        descrU,
-                        ua,
-                        uia,
-                        uja,
-                        infoU,
-                        x,
-                        result,
-                        policy,
-                        U_buffer);
-#else
- cusparseScsrsv2_solve(handle_cusparse, 
-                        CUSPARSE_OPERATION_NON_TRANSPOSE, 
-                        n, 
-                        nnzU, 
-                        &one, 
-                        descrU,
-                        ua,
-                        uia,
-                        uja,
-                        infoU,
-                        x,
-                        result,
-                        policy,
-                        U_buffer);
-#endif
+  cusparseDnVecDescr_t vecX, vecY;
+  cusparseCreateDnVec(&vecX, n, (void*)x, cuda_data_type);
+  cusparseCreateDnVec(&vecY, n, (void*)result, cuda_data_type);
+  
+  cusparseSpSV_solve(handle_cusparse, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                     &one, matU, vecX, vecY, cuda_data_type,
+                     CUSPARSE_SPSV_ALG_DEFAULT, spsvDescrU);
+  
+  cusparseDestroyDnVec(vecX);
+  cusparseDestroyDnVec(vecY);
 }
 
 /* not std blas but needed and embarassingly parallel */
@@ -850,5 +438,221 @@ void cuda_vec_copy(const int n, const real_type *src, real_type *dest){
 void cuda_vec_zero(const int n, real_type *vec){
 
   cuda_vec_zero_kernel<<<1024, 1024>>>(n, vec);
+}
+
+__global__ void cuda_vec_set_kernel(const int n, real_type value, real_type *x) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  while (idx < n) {
+    x[idx] = value;
+    idx += blockDim.x * gridDim.x;
+  }
+}
+
+void cuda_vec_set(const int n, real_type value, real_type *vec) {
+  cuda_vec_set_kernel<<<1024, 1024>>>(n, value, vec);
+}
+
+void cuda_gemv(const char *T,
+               const int m,
+               const int n,
+               const double *alpha,
+               const double *A,
+               const int lda,
+               const double *x,
+               const double *beta,
+               double *y) {
+  cublasOperation_t op = (T[0] == 'T' || T[0] == 't') 
+                          ? CUBLAS_OP_T : CUBLAS_OP_N;
+  cublasDgemv(handle_cublas, op, m, n, alpha, A, lda, x, 1, beta, y, 1);
+}
+
+void cuda_gemm(const char *transA,
+               const char *transB,
+               const int m,
+               const int n,
+               const int k,
+               const real_type *alpha,
+               const real_type *A,
+               const int lda,
+               const real_type *B,
+               const int ldb,
+               const real_type *beta,
+               real_type *C,
+               const int ldc) {
+  cublasOperation_t opA = (transA[0] == 'T' || transA[0] == 't') 
+                           ? CUBLAS_OP_T : CUBLAS_OP_N;
+  cublasOperation_t opB = (transB[0] == 'T' || transB[0] == 't') 
+                           ? CUBLAS_OP_T : CUBLAS_OP_N;
+  cublasDgemm(handle_cublas, opA, opB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
+}
+
+real_type cuda_nrm2(const int n, const real_type *v) {
+  real_type result;
+  cublasDnrm2(handle_cublas, n, v, 1, &result);
+  cudaDeviceSynchronize();
+  return result;
+}
+
+static void cuda_jacobi_eigen_host(int n, real_type *A, real_type *w, real_type *V) {
+  int max_iter = 100 * n * n;
+  real_type eps = 1e-14;
+  
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      V[i + j * n] = (i == j) ? 1.0 : 0.0;
+    }
+  }
+  
+  for (int iter = 0; iter < max_iter; ++iter) {
+    int p = 0, q = 1;
+    real_type max_off = fabs(A[0 + 1 * n]);
+    
+    for (int i = 0; i < n; ++i) {
+      for (int j = i + 1; j < n; ++j) {
+        if (fabs(A[i + j * n]) > max_off) {
+          max_off = fabs(A[i + j * n]);
+          p = i;
+          q = j;
+        }
+      }
+    }
+    
+    if (max_off < eps) break;
+    
+    real_type app = A[p + p * n];
+    real_type aqq = A[q + q * n];
+    real_type apq = A[p + q * n];
+    
+    real_type theta = 0.5 * atan2(2.0 * apq, aqq - app);
+    real_type c = cos(theta);
+    real_type s = sin(theta);
+    
+    for (int i = 0; i < n; ++i) {
+      real_type aip = A[i + p * n];
+      real_type aiq = A[i + q * n];
+      A[i + p * n] = c * aip - s * aiq;
+      A[i + q * n] = s * aip + c * aiq;
+      
+      A[p + i * n] = A[i + p * n];
+      A[q + i * n] = A[i + q * n];
+    }
+    
+    A[p + p * n] = c * c * app - 2.0 * c * s * apq + s * s * aqq;
+    A[q + q * n] = s * s * app + 2.0 * c * s * apq + c * c * aqq;
+    A[p + q * n] = 0.0;
+    A[q + p * n] = 0.0;
+    
+    for (int i = 0; i < n; ++i) {
+      real_type vip = V[i + p * n];
+      real_type viq = V[i + q * n];
+      V[i + p * n] = c * vip - s * viq;
+      V[i + q * n] = s * vip + c * viq;
+    }
+  }
+  
+  for (int i = 0; i < n; ++i) {
+    w[i] = A[i + i * n];
+  }
+  
+  for (int i = 0; i < n - 1; ++i) {
+    int min_idx = i;
+    for (int j = i + 1; j < n; ++j) {
+      if (w[j] < w[min_idx]) min_idx = j;
+    }
+    if (min_idx != i) {
+      real_type tmp = w[i];
+      w[i] = w[min_idx];
+      w[min_idx] = tmp;
+      for (int k = 0; k < n; ++k) {
+        tmp = V[k + i * n];
+        V[k + i * n] = V[k + min_idx * n];
+        V[k + min_idx * n] = tmp;
+      }
+    }
+  }
+}
+
+void cuda_dsyev(const int n,
+                real_type *A,
+                real_type *w,
+                real_type *eigvecs) {
+  cuda_jacobi_eigen_host(n, A, w, eigvecs);
+}
+
+static int cuda_cholesky_host(int n, real_type *A) {
+  for (int j = 0; j < n; ++j) {
+    real_type sum = A[j + j * n];
+    for (int k = 0; k < j; ++k) {
+      sum -= A[j + k * n] * A[j + k * n];
+    }
+    if (sum <= 0.0) return -1;
+    A[j + j * n] = sqrt(sum);
+    
+    for (int i = j + 1; i < n; ++i) {
+      sum = A[i + j * n];
+      for (int k = 0; k < j; ++k) {
+        sum -= A[i + k * n] * A[j + k * n];
+      }
+      A[i + j * n] = sum / A[j + j * n];
+    }
+  }
+  return 0;
+}
+
+void cuda_dsygv(const int n,
+                real_type *A,
+                real_type *B,
+                real_type *w,
+                real_type *eigvecs) {
+  real_type *L = (real_type *)malloc(n * n * sizeof(real_type));
+  real_type *C = (real_type *)malloc(n * n * sizeof(real_type));
+  
+  memcpy(L, B, n * n * sizeof(real_type));
+  
+  int ret = cuda_cholesky_host(n, L);
+  if (ret != 0) {
+    for (int i = 0; i < n; ++i) {
+      L[i + i * n] += 1e-10;
+    }
+    cuda_cholesky_host(n, L);
+  }
+  
+  for (int j = 0; j < n; ++j) {
+    for (int i = 0; i < n; ++i) {
+      real_type sum = A[i + j * n];
+      for (int k = 0; k < i; ++k) {
+        sum -= L[i + k * n] * C[k + j * n];
+      }
+      C[i + j * n] = sum / L[i + i * n];
+    }
+  }
+  
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      real_type sum = C[i + j * n];
+      for (int k = 0; k < j; ++k) {
+        sum -= L[j + k * n] * A[i + k * n];
+      }
+      A[i + j * n] = sum / L[j + j * n];
+    }
+  }
+  
+  cuda_jacobi_eigen_host(n, A, w, eigvecs);
+  
+  for (int col = 0; col < n; ++col) {
+    for (int i = n - 1; i >= 0; --i) {
+      real_type sum = eigvecs[i + col * n];
+      for (int k = i + 1; k < n; ++k) {
+        sum -= L[k + i * n] * C[k + col * n];
+      }
+      C[i + col * n] = sum / L[i + i * n];
+    }
+    for (int i = 0; i < n; ++i) {
+      eigvecs[i + col * n] = C[i + col * n];
+    }
+  }
+  
+  free(L);
+  free(C);
 }
 

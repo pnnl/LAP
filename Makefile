@@ -203,7 +203,8 @@ CORE_OBJS := $(BUILD_DIR)/blas.o $(BUILD_DIR)/GS.o \
 
 # simple_blas.o is only needed for backends that don't have their own blas implementation
 # OpenMP backends have their own blas in openmp_blas.o
-ifneq (,$(filter $(BACKEND),openmp openmp_offload))
+# CUDA and HIP have their own blas implementations too
+ifneq (,$(filter $(BACKEND),openmp openmp_offload cuda hip))
     COMMON_OBJS := $(CORE_OBJS)
 else
     COMMON_OBJS := $(BUILD_DIR)/simple_blas.o $(CORE_OBJS)

@@ -3,6 +3,10 @@
 #ifndef CUDABLAS_H
 #define CUDABLAS_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 real_type cuda_dot (const int n, const real_type *v, const real_type *w);
 
 void cuda_scal (const int n, const real_type alpha, real_type *v);
@@ -137,5 +141,9 @@ real_type cuda_nrm2(const int n, const real_type *v);
 
 /* Set vector elements to value */
 void cuda_vec_set(const int n, real_type value, real_type *vec);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
