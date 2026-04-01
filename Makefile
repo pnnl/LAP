@@ -169,9 +169,17 @@ endif
 # ==============================================================================
 # Object files
 # ==============================================================================
-COMMON_OBJS := $(BUILD_DIR)/simple_blas.o $(BUILD_DIR)/blas.o $(BUILD_DIR)/GS.o \
-               $(BUILD_DIR)/it_jacobi.o $(BUILD_DIR)/line_jacobi.o $(BUILD_DIR)/prec.o \
-               $(BUILD_DIR)/cg.o $(BUILD_DIR)/io_utils.o
+# Core objects needed by all backends
+CORE_OBJS := $(BUILD_DIR)/blas.o $(BUILD_DIR)/GS.o \
+             $(BUILD_DIR)/it_jacobi.o $(BUILD_DIR)/line_jacobi.o $(BUILD_DIR)/prec.o \
+             $(BUILD_DIR)/cg.o $(BUILD_DIR)/io_utils.o
+
+# simple_blas.o is only needed for backends that don't have their own blas implementation
+ifeq ($(BACKEND),openmp)
+    COMMON_OBJS := $(CORE_OBJS)
+else
+    COMMON_OBJS := $(BUILD_DIR)/simple_blas.o $(CORE_OBJS)
+endif
 
 OBJS_LAPLACIAN := $(BACKEND_OBJS) $(COMMON_OBJS) $(BUILD_DIR)/cg_driver.o
 OBJS_CG        := $(BACKEND_OBJS) $(COMMON_OBJS) $(BUILD_DIR)/cg_driver2.o
