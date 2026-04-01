@@ -4,7 +4,7 @@
 void openmp_scal (const int n, const real_type alpha, real_type *v)
 { 
   int i;
-#pragma omp target simd  map(alpha) map(tofrom:v[0:n])
+#pragma omp parallel for simd
   for (i = 0; i < n; ++i) {
     v[i] *= alpha;
   }
@@ -12,7 +12,7 @@ void openmp_scal (const int n, const real_type alpha, real_type *v)
 
 void openmp_axpy (const int n, const real_type alpha, const real_type *x, real_type *y){
   int i;
-#pragma omp target simd  map(to:x[0:n]) map(tofrom:y[0:n])
+#pragma omp parallel for simd
   for (i = 0; i < n; ++i) {
     y[i] += alpha * x[i];
   }
@@ -111,7 +111,7 @@ void openmp_upper_triangular_solve(const int n,
 void openmp_vec_vec(const int n, const real_type *x, const real_type *y, real_type *res)
 {
   int i;
-#pragma omp target simd  map(to:x[0:n], y[0:n]) map(from:res[0:n])
+#pragma omp parallel for simd
   for (i = 0; i < n; ++i) {
     res[i] = x[i] * y[i];
   }
@@ -121,7 +121,7 @@ void openmp_vec_vec(const int n, const real_type *x, const real_type *y, real_ty
 void openmp_vector_reciprocal(const int n, const real_type *v, real_type *res)
 {
   int i;
-#pragma omp target simd  map(to:v[0:n]) map(from:res[0:n])
+#pragma omp parallel for simd
   for (i = 0; i < n; ++i) {
     if (v[i] != 0.0) {
       res[i] = 1.0 / v[i];
@@ -135,7 +135,7 @@ void openmp_vector_reciprocal(const int n, const real_type *v, real_type *res)
 void openmp_vector_sqrt(const int n, const real_type *v, real_type *res)
 {
   int i;
-#pragma omp target simd   map(to:v[0:n]) map(from:res[0:n])
+#pragma omp parallel for simd
   for (i = 0; i < n; ++i) {
     if  (v[i] >= 0.0) {
       res[i] = sqrt(v[i]);
@@ -148,7 +148,7 @@ void openmp_vector_sqrt(const int n, const real_type *v, real_type *res)
 void openmp_vec_copy(const int n, const real_type *src, real_type *dest)
 {
   int i;
-#pragma omp target simd  map(to:src[0:n]) map(from:dest[0:n])
+#pragma omp parallel for simd
   for (i = 0; i < n; ++i) {
     dest[i] = src[i];  
   }
@@ -157,7 +157,7 @@ void openmp_vec_copy(const int n, const real_type *src, real_type *dest)
 void openmp_vec_zero(const int n, real_type *vec)
 {
   int i;
-#pragma omp target simd    map(tofrom:vec[0:n])
+#pragma omp parallel for simd
   for (i = 0; i < n; ++i) {
     vec[i] = 0.0;  
   }

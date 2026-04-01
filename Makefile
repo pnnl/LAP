@@ -132,7 +132,7 @@ else ifeq ($(BACKEND),openmp)
     OMP_FLAGS  := -fopenmp -std=c99
     OMP_LIBS   := -lgomp
     
-    BACKEND_OBJS := $(BUILD_DIR)/openmp_blas.o
+    BACKEND_OBJS := $(BUILD_DIR)/openmp_blas.o $(BUILD_DIR)/devMem_cpu.o
     EXE_PREFIX   := lap_openmp
     
     define COMPILE_C
@@ -151,7 +151,7 @@ else ifeq ($(BACKEND),noacc)
     
     CFLAGS     := -std=c99
     
-    BACKEND_OBJS :=
+    BACKEND_OBJS := $(BUILD_DIR)/devMem_cpu.o
     EXE_PREFIX   := lap_cpu
     
     define COMPILE_C
@@ -235,6 +235,9 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 
 # Compile CPU backend files
 $(BUILD_DIR)/simple_blas.o: $(CPU_DIR)/simple_blas.c
+	$(COMPILE_C)
+
+$(BUILD_DIR)/devMem_cpu.o: $(CPU_DIR)/devMem.c
 	$(COMPILE_C)
 
 # Compile OpenMP backend files
