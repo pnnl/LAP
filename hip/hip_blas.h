@@ -3,6 +3,7 @@
 #define HIPBLAS_H
 
 void initialize_handles();
+void finalize_handles();
 
 void analyze_spmv(const int n,
                   const int nnz,

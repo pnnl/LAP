@@ -44,6 +44,31 @@ void initialize_handles(){
   cusparseCreate(&handle_cusparse);
 }
 
+void finalize_handles(){
+  /* Clean up SpSV descriptors */
+  if (spsvDescrL) { cusparseSpSV_destroyDescr(spsvDescrL); spsvDescrL = NULL; }
+  if (spsvDescrU) { cusparseSpSV_destroyDescr(spsvDescrU); spsvDescrU = NULL; }
+  
+  /* Clean up sparse matrix descriptors */
+  if (matL) { cusparseDestroySpMat(matL); matL = NULL; }
+  if (matU) { cusparseDestroySpMat(matU); matU = NULL; }
+  if (matA) { cusparseDestroySpMat(matA); matA = NULL; }
+  
+  /* Clean up dense vector descriptors */
+  if (vecTmpIn) { cusparseDestroyDnVec(vecTmpIn); vecTmpIn = NULL; }
+  if (vecTmpOut) { cusparseDestroyDnVec(vecTmpOut); vecTmpOut = NULL; }
+  vecTmpSize = 0;
+  
+  /* Clean up buffers */
+  if (mv_buffer) { cudaFree(mv_buffer); mv_buffer = NULL; }
+  if (L_buffer) { cudaFree(L_buffer); L_buffer = NULL; }
+  if (U_buffer) { cudaFree(U_buffer); U_buffer = NULL; }
+  
+  /* Destroy handles */
+  if (handle_cusparse) { cusparseDestroy(handle_cusparse); handle_cusparse = NULL; }
+  if (handle_cublas) { cublasDestroy(handle_cublas); handle_cublas = NULL; }
+}
+
 void initialize_spmv_buffer(const int n, 
                             const int nnz, 
                             int *ia, 

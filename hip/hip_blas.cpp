@@ -146,6 +146,37 @@ void initialize_handles() {
   HIP_CHECK(hipDeviceSynchronize());
 }
 
+void finalize_handles() {
+  /* Clean up matrix info */
+  if (infoA) { rocsparse_destroy_mat_info(infoA); infoA = NULL; }
+  if (infoL) { rocsparse_destroy_mat_info(infoL); infoL = NULL; }
+  if (infoU) { rocsparse_destroy_mat_info(infoU); infoU = NULL; }
+  
+  /* Clean up matrix descriptors */
+  if (descrL) { rocsparse_destroy_mat_descr(descrL); descrL = NULL; }
+  if (descrU) { rocsparse_destroy_mat_descr(descrU); descrU = NULL; }
+  if (descrA) { rocsparse_destroy_mat_descr(descrA); descrA = NULL; }
+  if (descrLt) { rocsparse_destroy_mat_descr(descrLt); descrLt = NULL; }
+  if (matA) { rocsparse_destroy_mat_descr(matA); matA = NULL; }
+  
+#if USE_MODERN_SPMV
+  /* Clean up modern SpMV descriptors */
+  if (spmat_A) { rocsparse_destroy_spmat_descr(spmat_A); spmat_A = NULL; }
+  if (dnvec_x) { rocsparse_destroy_dnvec_descr(dnvec_x); dnvec_x = NULL; }
+  if (dnvec_y) { rocsparse_destroy_dnvec_descr(dnvec_y); dnvec_y = NULL; }
+#endif
+  
+  /* Clean up buffers */
+  if (mv_buffer) { hipFree(mv_buffer); mv_buffer = NULL; }
+  if (L_buffer) { hipFree(L_buffer); L_buffer = NULL; }
+  if (U_buffer) { hipFree(U_buffer); U_buffer = NULL; }
+  if (ichol_buffer) { hipFree(ichol_buffer); ichol_buffer = NULL; }
+  
+  /* Destroy handles */
+  if (handle_rocsparse) { rocsparse_destroy_handle(handle_rocsparse); handle_rocsparse = NULL; }
+  if (handle_rocblas) { rocblas_destroy_handle(handle_rocblas); handle_rocblas = NULL; }
+}
+
 void analyze_spmv(const int n,
                   const int nnz,
                   int *ia,

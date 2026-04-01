@@ -62,6 +62,7 @@ void cuda_gemv(const char *T,
                double *y);
 
 void initialize_handles();
+void finalize_handles();
 
 void initialize_spmv_buffer(const int n, 
                             const int nnz, 

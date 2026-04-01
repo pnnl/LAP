@@ -563,5 +563,9 @@ int main(int argc, char *argv[]) {
   free(U);
   free(D);
   
+#if (CUDA || HIP)
+  finalize_handles();
+#endif
+  
   return 0;
 }
