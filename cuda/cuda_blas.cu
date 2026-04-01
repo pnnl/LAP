@@ -27,7 +27,19 @@ static int vecTmpSize = 0;
 
 
 void initialize_handles(){
-  //printf("initializing handles! \n");
+  int device_count = 0;
+  cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
+  if (cuda_err != cudaSuccess || device_count == 0) {
+    fprintf(stderr, "ERROR: No CUDA devices available (count=%d, err=%d: %s)\n", 
+            device_count, cuda_err, cudaGetErrorString(cuda_err));
+    exit(EXIT_FAILURE);
+  }
+  cudaSetDevice(0);
+  cudaDeviceProp props;
+  cudaGetDeviceProperties(&props, 0);
+  printf("Using GPU: %s (device 0 of %d)\n", props.name, device_count);
+  fflush(stdout);
+  
   cublasCreate(&handle_cublas);
   cusparseCreate(&handle_cusparse);
 }
