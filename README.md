@@ -7,8 +7,9 @@ LAP provides GPU-accelerated iterative solvers for sparse linear systems and eig
 
 - **CG (Conjugate Gradient)**: Solves sparse linear systems Ax = b
 - **LOBPCG (Locally Optimal Block Preconditioned Conjugate Gradient)**: Computes smallest eigenvalues/eigenvectors of sparse matrices
+- **SpMV**: Sparse matrix-vector multiplication benchmark
 
-Both solvers support multiple preconditioners optimized for GPU execution.
+All solvers support multiple preconditioners optimized for GPU execution.
 
 ## Directory Structure
 
@@ -47,9 +48,11 @@ make BACKEND=openmp
 # Build for CPU only (serial)
 make BACKEND=noacc
 
-# Build specific target only
-make BACKEND=hip lobpcg    # Only LOBPCG solver
-make BACKEND=hip cg        # Only CG solver
+# Build specific targets
+make BACKEND=hip lobpcg    # LOBPCG eigenvalue solver
+make BACKEND=hip cg        # CG solver (general matrices)
+make BACKEND=hip laplacian # CG solver (graph Laplacian)
+make BACKEND=hip spmv      # SpMV benchmark
 
 # Clean build artifacts
 make clean
@@ -75,19 +78,20 @@ make BACKEND=hip DEBUG=1
 
 ### Input Format
 
-Both solvers accept matrices in Matrix Market (.mtx) format. Matrices should be symmetric for eigenvalue problems.
+All tools accept matrices in Matrix Market (.mtx) format.
 
-### CG Solver (Linear Systems)
+---
 
-Solves Ax = b where A is a sparse SPD matrix.
+### CG Solver for Graph Laplacian
+
+Solves Lx = b where L is the graph Laplacian computed from an adjacency matrix.
 
 ```bash
-./lap_hip_cg <matrix.mtx> <mode> <preconditioner> <tolerance> <max_iter> <M> <K>
+./lap_hip_laplacian <matrix.mtx> <preconditioner> <tolerance> <max_iter> <M> <K>
 ```
 
 **Parameters:**
-- `matrix.mtx`: Path to Matrix Market file
-- `mode`: `laplacian` (compute graph Laplacian) or `normal` (use matrix as-is)
+- `matrix.mtx`: Path to adjacency matrix in Matrix Market format
 - `preconditioner`: `GS_std`, `GS_it`, `it_jacobi`, `line_jacobi`, `ichol`, or `none`
 - `tolerance`: Convergence tolerance (e.g., `1e-6`)
 - `max_iter`: Maximum iterations
@@ -97,15 +101,111 @@ Solves Ax = b where A is a sparse SPD matrix.
 **Examples:**
 
 ```bash
-# CG with Gauss-Seidel preconditioner on graph Laplacian
-./lap_hip_cg thermal2.mtx laplacian GS_it 1e-6 10000 6 3
+# Solve graph Laplacian with Gauss-Seidel preconditioner
+./lap_hip_laplacian road_usa.mtx GS_it 1e-6 10000 6 3
 
-# CG with iterative Jacobi preconditioner
-./lap_hip_cg G3_circuit.mtx normal it_jacobi 1e-6 10000 25 25
+# Using iterative Jacobi preconditioner
+./lap_hip_laplacian delaunay_n20.mtx it_jacobi 1e-6 10000 25 25
 
-# CG without preconditioner
-./lap_hip_cg matrix.mtx normal none 1e-6 10000 1 1
+# Without preconditioner
+./lap_hip_laplacian matrix.mtx none 1e-6 10000 1 1
 ```
+
+---
+
+### CG Solver for General Matrices
+
+Solves Ax = b where A is a sparse symmetric positive definite matrix.
+
+```bash
+./lap_hip_cg <matrix.mtx> <preconditioner> <tolerance> <max_iter> <M> <K>
+```
+
+**Parameters:**
+- `matrix.mtx`: Path to SPD matrix in Matrix Market format
+- `preconditioner`: `GS_std`, `GS_it`, `it_jacobi`, `line_jacobi`, `ichol`, or `none`
+- `tolerance`: Convergence tolerance (e.g., `1e-6`)
+- `max_iter`: Maximum iterations
+- `M`: Outer iterations for preconditioner
+- `K`: Inner iterations for preconditioner
+
+**Examples:**
+
+```bash
+# Solve with Gauss-Seidel preconditioner
+./lap_hip_cg thermal2.mtx GS_it 1e-6 10000 6 3
+
+# Solve G3_circuit with iterative Jacobi
+./lap_hip_cg G3_circuit.mtx it_jacobi 1e-6 10000 25 25
+
+# Using standard Gauss-Seidel
+./lap_hip_cg matrix.mtx GS_std 1e-6 5000 6 3
+
+# Without preconditioner (for comparison)
+./lap_hip_cg matrix.mtx none 1e-6 10000 1 1
+```
+
+**Example Output (CG):**
+
+```
+Solving CG linear system for thermal2.mtx
+
+   Matrix size    : 1228045 x 1228045
+   Matrix nnz     : 8580313
+   Preconditioner : GS_it
+   CG tolerance   : 1e-06
+   CG maxit       : 10000
+   M (outer)      : 6
+   K (inner)      : 3
+
+CG converged in 245 iterations
+Final residual: 9.87e-07
+Time: 3.45 seconds
+```
+
+---
+
+### SpMV Benchmark
+
+Benchmarks sparse matrix-vector multiplication performance.
+
+```bash
+./lap_hip_spmv <matrix.mtx> <num_trials>
+```
+
+**Parameters:**
+- `matrix.mtx`: Path to matrix in Matrix Market format
+- `num_trials`: Number of SpMV operations to perform
+
+**Examples:**
+
+```bash
+# Run 1000 SpMV iterations on thermal2 matrix
+./lap_hip_spmv thermal2.mtx 1000
+
+# Quick benchmark with 100 iterations
+./lap_hip_spmv G3_circuit.mtx 100
+
+# Large benchmark
+./lap_hip_spmv road_usa.mtx 5000
+```
+
+**Example Output (SpMV):**
+
+```
+Matrix info:
+
+   Matrix size       : 1228045 x 1228045
+   Matrix nnz        : 8580313
+   Matrix nnz un     : 8580313
+   Number of trials  : 1000
+
+SpMV time: 0.523 seconds
+Average time per SpMV: 0.523 ms
+Throughput: 32.8 GFLOP/s
+```
+
+---
 
 ### LOBPCG Solver (Eigenvalue Problems)
 
@@ -141,20 +241,12 @@ Computes the k smallest eigenvalues and eigenvectors of a sparse symmetric matri
 
 # Quick test with fewer iterations
 ./lap_hip_lobpcg matrix.mtx normal GS_it 1e-6 100 6 3 5 12345 1
+
+# Compute 10 eigenvalues with quiet output
+./lap_hip_lobpcg matrix.mtx normal GS_std 1e-6 5000 6 3 10 12345 0
 ```
 
-### Preconditioner Selection Guide
-
-| Preconditioner | Best For | Parameters |
-|---------------|----------|------------|
-| `GS_std` | General matrices | M=6, K=3 |
-| `GS_it` | Well-conditioned matrices | M=6, K=3 |
-| `it_jacobi` | Diagonally dominant matrices | M=25, K=25 |
-| `line_jacobi` | Structured grids | M=1, K=1 |
-| `ichol` | SPD matrices | - |
-| `none` | Testing/comparison | - |
-
-### Example Output (LOBPCG)
+**Example Output (LOBPCG):**
 
 ```
 ======================================================
@@ -186,6 +278,19 @@ Computed Eigenvalues:
   ...
 ======================================================
 ```
+
+---
+
+## Preconditioner Selection Guide
+
+| Preconditioner | Best For | Typical Parameters |
+|---------------|----------|-------------------|
+| `GS_std` | General matrices | M=6, K=3 |
+| `GS_it` | Well-conditioned matrices | M=6, K=3 |
+| `it_jacobi` | Diagonally dominant matrices | M=25, K=25 |
+| `line_jacobi` | Structured grids | M=1, K=1 |
+| `ichol` | SPD matrices | - |
+| `none` | Testing/baseline comparison | - |
 
 ## Supported Platforms
 
