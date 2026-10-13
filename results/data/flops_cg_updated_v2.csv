@@ -1,0 +1,26 @@
+﻿Matrix,Preconditioner,Flops (log10 scale)
+Serena,Gauss-Seidel,11.46384471
+Serena,Two Stage Gauss-Seidel (GS_it),
+Serena,Jacobi + Two Stage Gauss-Seidel (GS_it2),12.21512686
+Serena,Jacobi,11.3721532
+Serena,Incomple Cholesky,
+G3_circuit,Gauss-Seidel,11.24408857
+G3_circuit,Two Stage Gauss-Seidel (GS_it),
+G3_circuit,Jacobi + Two Stage Gauss-Seidel (GS_it2),11.18336896
+G3_circuit,Jacobi,11.25038571
+G3_circuit,Incomple Cholesky,10.84159294
+thermal2,Gauss-Seidel,11.39399957
+thermal2,Two Stage Gauss-Seidel (GS_it),11.91164609
+thermal2,Jacobi + Two Stage Gauss-Seidel (GS_it2),11.28226796
+thermal2,Jacobi,11.28186641
+thermal2,Incomple Cholesky,11.0980989
+af_0_k101,Gauss-Seidel,12.61178485
+af_0_k101,Two Stage Gauss-Seidel (GS_it),
+af_0_k101,Jacobi + Two Stage Gauss-Seidel (GS_it2),12.57059222
+af_0_k101,Jacobi,
+af_0_k101,Incomple Cholesky,12.01284141
+af_5_k101,Gauss-Seidel,12.58478499
+af_5_k101,Two Stage Gauss-Seidel (GS_it),12.52146493
+af_5_k101,Jacobi + Two Stage Gauss-Seidel (GS_it2),12.32165179
+af_5_k101,Jacobi,12.39788575
+af_5_k101,Incomple Cholesky,

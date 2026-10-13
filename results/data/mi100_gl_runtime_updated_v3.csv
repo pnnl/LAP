@@ -1,0 +1,25 @@
+﻿Matrix,Preconditioner,Execution Time (in seconds)
+adaptive,Gauss-Seidel,214.5098
+adaptive,Two Stage Gauss-Seidel (GS_it),706.3259
+adaptive,Jacobi + Two Stage Gauss-Seidel (GS_it2),38.589
+adaptive,Jacobi,32.0386
+delaunay_n24,Gauss-Seidel,667.7493
+delaunay_n24,Two Stage Gauss-Seidel (GS_it),268.5572
+delaunay_n24,Jacobi + Two Stage Gauss-Seidel (GS_it2),288.0512
+delaunay_n24,Jacobi,132.1431
+hugebubbles-00000,Gauss-Seidel,1130.1549
+hugebubbles-00000,Two Stage Gauss-Seidel (GS_it),2694.3517
+hugebubbles-00000,Jacobi + Two Stage Gauss-Seidel (GS_it2),577.9551
+hugebubbles-00000,Jacobi,215.706
+road_central,Gauss-Seidel,1428.9446
+road_central,Two Stage Gauss-Seidel (GS_it),
+road_central,Jacobi + Two Stage Gauss-Seidel (GS_it2),335.8036
+road_central,Jacobi,415.9733
+road_usa,Gauss-Seidel,3959.3578
+road_usa,Two Stage Gauss-Seidel (GS_it),
+road_usa,Jacobi + Two Stage Gauss-Seidel (GS_it2),958.1874
+road_usa,Jacobi,944.0961
+italy_osm,Gauss-Seidel,2945.858
+italy_osm,Two Stage Gauss-Seidel (GS_it),
+italy_osm,Jacobi + Two Stage Gauss-Seidel (GS_it2),733.572
+italy_osm,Jacobi,532.2553

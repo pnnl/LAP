@@ -1,0 +1,26 @@
+﻿Matrix,Preconditioner,Execution Time (in seconds)
+Serena,Gauss-Seidel,10.1653
+Serena,Two Stage Gauss-Seidel (GS_it),
+Serena,Jacobi + Two Stage Gauss-Seidel (GS_it2),13.2698
+Serena,Jacobi,2.149
+Serena,Incomple Cholesky,
+G3_circuit,Gauss-Seidel,20.4354
+G3_circuit,Two Stage Gauss-Seidel (GS_it),
+G3_circuit,Jacobi + Two Stage Gauss-Seidel (GS_it2),3.6039
+G3_circuit,Jacobi,5.7723
+G3_circuit,Incomple Cholesky,12.9241
+thermal2,Gauss-Seidel,22.1059
+thermal2,Two Stage Gauss-Seidel (GS_it),15.234
+thermal2,Jacobi + Two Stage Gauss-Seidel (GS_it2),4.2514
+thermal2,Jacobi,4.0253
+thermal2,Incomple Cholesky,15.6881
+af_0_k101,Gauss-Seidel,722.0323
+af_0_k101,Two Stage Gauss-Seidel (GS_it),
+af_0_k101,Jacobi + Two Stage Gauss-Seidel (GS_it2),43.0348
+af_0_k101,Jacobi,
+af_0_k101,Incomple Cholesky,286.8739
+af_5_k101,Gauss-Seidel,421.4871
+af_5_k101,Two Stage Gauss-Seidel (GS_it),
+af_5_k101,Jacobi + Two Stage Gauss-Seidel (GS_it2),24.5398
+af_5_k101,Jacobi,42.1913
+af_5_k101,Incomple Cholesky,194.8283

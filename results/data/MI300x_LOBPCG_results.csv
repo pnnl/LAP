@@ -1,0 +1,49 @@
+Matrix,Preconditioner,Prec_key,Time_s,Iterations,Converged
+G3_circuit,Gauss-Seidel,GS_std,8714.3466,8986,5/5
+G3_circuit,Two Stage Gauss-Seidel (GS_it),GS_it,329.04,10001,1/5
+G3_circuit,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,67.1781,4452,5/5
+G3_circuit,iterative Jacobi,it_jacobi,138.4345,8569,5/5
+adaptive,Gauss-Seidel,GS_std,5439.4026,2325,5/5
+adaptive,Two Stage Gauss-Seidel (GS_it),GS_it,695.8227,7914,5/5
+adaptive,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,136.5497,1502,5/5
+adaptive,Jacobi,line_jacobi,620.6125,10001,4/5
+adaptive,iterative Jacobi,it_jacobi,290.0059,4309,5/5
+az2010,Gauss-Seidel,GS_std,54.2662,599,5/5
+az2010,Two Stage Gauss-Seidel (GS_it),GS_it,4.8623,623,5/5
+az2010,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,3.1279,376,5/5
+az2010,Jacobi,line_jacobi,7.0419,2737,5/5
+az2010,iterative Jacobi,it_jacobi,5.6795,1992,5/5
+citationCiteseer,Gauss-Seidel,GS_std,16.3661,144,5/5
+citationCiteseer,Two Stage Gauss-Seidel (GS_it),GS_it,1.8607,124,5/5
+citationCiteseer,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,1.3029,92,5/5
+citationCiteseer,Jacobi,line_jacobi,2.7808,732,5/5
+citationCiteseer,iterative Jacobi,it_jacobi,2.3445,488,5/5
+delaunay_n20,Gauss-Seidel,GS_std,324.859,889,5/5
+delaunay_n20,Two Stage Gauss-Seidel (GS_it),GS_it,10.9553,1114,5/5
+delaunay_n20,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,8.6778,548,5/5
+delaunay_n20,Jacobi,line_jacobi,15.6661,3778,5/5
+delaunay_n20,iterative Jacobi,it_jacobi,10.1388,1905,5/5
+italy_osm,Gauss-Seidel,GS_std,18984.4772,6772,5/5
+italy_osm,Two Stage Gauss-Seidel (GS_it),GS_it,639.2629,5013,5/5
+italy_osm,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,443.8803,4089,5/5
+italy_osm,iterative Jacobi,it_jacobi,724.4369,8574,5/5
+road_usa,Gauss-Seidel,GS_std,48032.2387,5390,5/5
+road_usa,Two Stage Gauss-Seidel (GS_it),GS_it,1616.6186,9226,5/5
+road_usa,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,761.368,3652,5/5
+road_usa,Jacobi,line_jacobi,649.4416,10001,1/5
+road_usa,iterative Jacobi,it_jacobi,633.3707,6676,5/5
+sc2010,Gauss-Seidel,GS_std,39.0189,667,5/5
+sc2010,Two Stage Gauss-Seidel (GS_it),GS_it,6.6425,2392,5/5
+sc2010,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,2.7512,404,5/5
+sc2010,Jacobi,line_jacobi,6.2876,2840,5/5
+sc2010,iterative Jacobi,it_jacobi,4.4045,1679,5/5
+t60k,Gauss-Seidel,GS_std,13.6172,213,5/5
+t60k,Two Stage Gauss-Seidel (GS_it),GS_it,2.6921,728,5/5
+t60k,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,0.938,152,5/5
+t60k,Jacobi,line_jacobi,2.3404,1145,5/5
+t60k,iterative Jacobi,it_jacobi,1.7057,689,5/5
+thermal2,Gauss-Seidel,GS_std,557.9348,1277,5/5
+thermal2,Two Stage Gauss-Seidel (GS_it),GS_it,46.8222,4572,5/5
+thermal2,Jacobi + Two Stage Gauss-Seidel (GS_it2),GS_it2,14.25,878,5/5
+thermal2,Jacobi,line_jacobi,30.8211,4822,5/5
+thermal2,iterative Jacobi,it_jacobi,19.5974,2806,5/5

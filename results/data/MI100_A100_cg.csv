@@ -1,0 +1,37 @@
+﻿Matrix,Preconditioner,Normalized runtime w.r.t. A100
+Serena,Gauss-Seidel,0.249009169
+Serena,Two Stage GS,
+Serena,Two Stage Jac+GS,1.285006948
+Serena,line Jacobi,1.508209275
+Serena,iterative Jacobi,
+Serena,Incomple Cholesky,
+Hook_1498,Gauss-Seidel,0.164399925
+Hook_1498,Two Stage GS,
+Hook_1498,Two Stage Jac+GS,1.246065736
+Hook_1498,line Jacobi,1.463715101
+Hook_1498,iterative Jacobi,
+Hook_1498,Incomple Cholesky,
+G3_circuit,Gauss-Seidel,0.274423488
+G3_circuit,Two Stage GS,
+G3_circuit,Two Stage Jac+GS,1.678143064
+G3_circuit,line Jacobi,1.860020968
+G3_circuit,iterative Jacobi,1.817580512
+G3_circuit,Incomple Cholesky,0.256908521
+thermal2,Gauss-Seidel,0.366333536
+thermal2,Two Stage GS,1.806234349
+thermal2,Two Stage Jac+GS,1.739831128
+thermal2,line Jacobi,2.055578114
+thermal2,iterative Jacobi,2.104921489
+thermal2,Incomple Cholesky,0.367969846
+Fault_639,Gauss-Seidel,0.168032856
+Fault_639,Two Stage GS,
+Fault_639,Two Stage Jac+GS,
+Fault_639,line Jacobi,1.55546264
+Fault_639,iterative Jacobi,
+Fault_639,Incomple Cholesky,
+af_0_k101,Gauss-Seidel,0.15563491
+af_0_k101,Two Stage GS,
+af_0_k101,Two Stage Jac+GS,1.450751886
+af_0_k101,line Jacobi,
+af_0_k101,iterative Jacobi,
+af_0_k101,Incomple Cholesky,0.153476426

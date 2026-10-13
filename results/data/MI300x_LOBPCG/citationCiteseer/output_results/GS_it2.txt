@@ -1,0 +1,436 @@
+
+
+======================================================
+LOBPCG Eigenvalue Solver
+======================================================
+  Matrix file       : /home/kswirydo/LAP_PNNL//citationCiteseer/citationCiteseer.mtx
+  Matrix mode       : laplacian (L = D - A)
+  Matrix size       : 268495 x 268495
+  Matrix nnz        : 2581789
+  Num eigenvalues   : 5
+  Preconditioner    : GS_it2
+  Tolerance         : 1e-06
+  Max iterations    : 10000
+  M (outer iter)    : 6
+  K (inner iter)    : 3
+  Random seed       : 12345
+  Verbose           : 1
+======================================================
+
+Using GPU: AMD Instinct MI300X (device 0 of 1)
+LOBPCG: Estimated GPU memory requirement: 0.13 GB
+it    1  max residual = 1.676e+01
+  eigenvalue 1: 2.7562772943e-16  residual: 7.810e-15
+  eigenvalue 2: 8.5826412633e+00  residual: 1.645e+01
+  eigenvalue 3: 8.6406464996e+00  residual: 1.652e+01
+  eigenvalue 4: 8.6417990838e+00  residual: 1.676e+01
+  eigenvalue 5: 8.6434045557e+00  residual: 1.616e+01
+  ** Eigenpair 1 converged at iter 1, lambda = 2.7562772943e-16, residual = 7.810e-15
+it    2  max residual = 1.995e+00
+  eigenvalue 2: 4.4770930634e-01  residual: 1.740e+00
+  eigenvalue 3: 4.6030063017e-01  residual: 1.841e+00
+  eigenvalue 4: 4.6599993250e-01  residual: 1.789e+00
+  eigenvalue 5: 4.6857404092e-01  residual: 1.995e+00
+it    3  max residual = 3.897e-01
+  eigenvalue 2: 8.2223498507e-02  residual: 3.566e-01
+  eigenvalue 3: 8.5872986308e-02  residual: 3.592e-01
+  eigenvalue 4: 8.7094157500e-02  residual: 3.630e-01
+  eigenvalue 5: 8.7735510628e-02  residual: 3.897e-01
+it    4  max residual = 2.012e-01
+  eigenvalue 2: 3.6282628710e-02  residual: 1.972e-01
+  eigenvalue 3: 3.8229016989e-02  residual: 1.818e-01
+  eigenvalue 4: 3.9689102774e-02  residual: 2.012e-01
+  eigenvalue 5: 4.3778107736e-02  residual: 1.872e-01
+it    5  max residual = 1.265e-01
+  eigenvalue 2: 2.0653175860e-02  residual: 1.194e-01
+  eigenvalue 3: 2.3743072558e-02  residual: 1.123e-01
+  eigenvalue 4: 2.5876608581e-02  residual: 1.189e-01
+  eigenvalue 5: 2.6852135578e-02  residual: 1.265e-01
+it    6  max residual = 8.865e-02
+  eigenvalue 2: 1.4834089512e-02  residual: 7.373e-02
+  eigenvalue 3: 1.7714275960e-02  residual: 7.911e-02
+  eigenvalue 4: 1.9338919119e-02  residual: 8.829e-02
+  eigenvalue 5: 1.9738559806e-02  residual: 8.865e-02
+it    7  max residual = 7.015e-02
+  eigenvalue 2: 1.2100195299e-02  residual: 5.833e-02
+  eigenvalue 3: 1.4375496509e-02  residual: 6.733e-02
+  eigenvalue 4: 1.5568594859e-02  residual: 6.995e-02
+  eigenvalue 5: 1.6266852078e-02  residual: 7.015e-02
+it    8  max residual = 5.995e-02
+  eigenvalue 2: 1.0206458684e-02  residual: 5.995e-02
+  eigenvalue 3: 1.2097010366e-02  residual: 5.807e-02
+  eigenvalue 4: 1.3738066817e-02  residual: 5.233e-02
+  eigenvalue 5: 1.4371814799e-02  residual: 5.362e-02
+it    9  max residual = 6.308e-02
+  eigenvalue 2: 8.3946869158e-03  residual: 6.308e-02
+  eigenvalue 3: 1.0512750732e-02  residual: 5.169e-02
+  eigenvalue 4: 1.2411877458e-02  residual: 6.249e-02
+  eigenvalue 5: 1.3256029085e-02  residual: 3.996e-02
+it   10  max residual = 7.509e-02
+  eigenvalue 2: 6.9944853712e-03  residual: 5.364e-02
+  eigenvalue 3: 9.4997516754e-03  residual: 4.172e-02
+  eigenvalue 4: 1.0745053902e-02  residual: 7.509e-02
+  eigenvalue 5: 1.2519095851e-02  residual: 4.427e-02
+it   11  max residual = 7.658e-02
+  eigenvalue 2: 6.2245108331e-03  residual: 3.904e-02
+  eigenvalue 3: 8.9468813016e-03  residual: 3.633e-02
+  eigenvalue 4: 9.2067430595e-03  residual: 6.732e-02
+  eigenvalue 5: 1.0913881353e-02  residual: 7.658e-02
+it   12  max residual = 7.399e-02
+  eigenvalue 2: 5.8074597491e-03  residual: 3.000e-02
+  eigenvalue 3: 8.0518868772e-03  residual: 7.399e-02
+  eigenvalue 4: 8.5152686462e-03  residual: 4.656e-02
+  eigenvalue 5: 8.9075713893e-03  residual: 6.834e-02
+it   13  max residual = 6.733e-02
+  eigenvalue 2: 5.5811681355e-03  residual: 2.880e-02
+  eigenvalue 3: 6.8770310655e-03  residual: 6.733e-02
+  eigenvalue 4: 7.7544926769e-03  residual: 5.880e-02
+  eigenvalue 5: 8.3902146424e-03  residual: 2.686e-02
+it   14  max residual = 5.084e-02
+  eigenvalue 2: 5.3232942093e-03  residual: 4.187e-02
+  eigenvalue 3: 6.1595604868e-03  residual: 5.084e-02
+  eigenvalue 4: 7.1550901416e-03  residual: 4.690e-02
+  eigenvalue 5: 8.2216120468e-03  residual: 2.317e-02
+it   15  max residual = 4.943e-02
+  eigenvalue 2: 4.8926509121e-03  residual: 4.943e-02
+  eigenvalue 3: 5.8551812386e-03  residual: 2.977e-02
+  eigenvalue 4: 6.7583867829e-03  residual: 4.707e-02
+  eigenvalue 5: 8.0649350450e-03  residual: 2.878e-02
+it   16  max residual = 4.788e-02
+  eigenvalue 2: 4.5277888245e-03  residual: 4.127e-02
+  eigenvalue 3: 5.7553016745e-03  residual: 1.967e-02
+  eigenvalue 4: 6.3891633168e-03  residual: 4.788e-02
+  eigenvalue 5: 7.8030485478e-03  residual: 4.129e-02
+it   17  max residual = 4.695e-02
+  eigenvalue 2: 4.2886340859e-03  residual: 3.112e-02
+  eigenvalue 3: 5.7094593798e-03  residual: 1.384e-02
+  eigenvalue 4: 6.0962829733e-03  residual: 4.031e-02
+  eigenvalue 5: 7.4257085544e-03  residual: 4.695e-02
+it   18  max residual = 4.033e-02
+  eigenvalue 2: 4.1562696926e-03  residual: 2.193e-02
+  eigenvalue 3: 5.6855616074e-03  residual: 1.039e-02
+  eigenvalue 4: 5.9239938566e-03  residual: 3.047e-02
+  eigenvalue 5: 7.1156177027e-03  residual: 4.033e-02
+it   19  max residual = 2.979e-02
+  eigenvalue 2: 4.1009744241e-03  residual: 1.394e-02
+  eigenvalue 3: 5.6720018635e-03  residual: 8.856e-03
+  eigenvalue 4: 5.8116464903e-03  residual: 2.681e-02
+  eigenvalue 5: 6.9294886688e-03  residual: 2.979e-02
+it   20  max residual = 2.717e-02
+  eigenvalue 2: 4.0736271335e-03  residual: 1.079e-02
+  eigenvalue 3: 5.6575628562e-03  residual: 1.225e-02
+  eigenvalue 4: 5.7249774137e-03  residual: 2.231e-02
+  eigenvalue 5: 6.8113573191e-03  residual: 2.717e-02
+it   21  max residual = 2.615e-02
+  eigenvalue 2: 4.0576700574e-03  residual: 8.494e-03
+  eigenvalue 3: 5.6251821001e-03  residual: 1.635e-02
+  eigenvalue 4: 5.6863069154e-03  residual: 1.115e-02
+  eigenvalue 5: 6.7134075526e-03  residual: 2.615e-02
+it   22  max residual = 2.670e-02
+  eigenvalue 2: 4.0481401336e-03  residual: 7.116e-03
+  eigenvalue 3: 5.5867187510e-03  residual: 1.638e-02
+  eigenvalue 4: 5.6768602515e-03  residual: 6.166e-03
+  eigenvalue 5: 6.6219988123e-03  residual: 2.670e-02
+it   23  max residual = 3.870e-02
+  eigenvalue 2: 4.0396241792e-03  residual: 8.150e-03
+  eigenvalue 3: 5.5360536778e-03  residual: 2.081e-02
+  eigenvalue 4: 5.6732224901e-03  residual: 4.673e-03
+  eigenvalue 5: 6.4749858123e-03  residual: 3.870e-02
+it   24  max residual = 5.012e-02
+  eigenvalue 2: 4.0308572097e-03  residual: 8.426e-03
+  eigenvalue 3: 5.4422326935e-03  residual: 3.114e-02
+  eigenvalue 4: 5.6711041389e-03  residual: 4.006e-03
+  eigenvalue 5: 6.1767530900e-03  residual: 5.012e-02
+it   25  max residual = 4.031e-02
+  eigenvalue 2: 4.0218845533e-03  residual: 7.669e-03
+  eigenvalue 3: 5.2487012094e-03  residual: 4.031e-02
+  eigenvalue 4: 5.6696091194e-03  residual: 3.381e-03
+  eigenvalue 5: 5.8918431361e-03  residual: 3.752e-02
+it   26  max residual = 3.561e-02
+  eigenvalue 2: 4.0153098158e-03  residual: 6.398e-03
+  eigenvalue 3: 5.0420662838e-03  residual: 3.561e-02
+  eigenvalue 4: 5.6685963148e-03  residual: 2.736e-03
+  eigenvalue 5: 5.7819762026e-03  residual: 2.184e-02
+it   27  max residual = 2.366e-02
+  eigenvalue 2: 4.0113540191e-03  residual: 4.520e-03
+  eigenvalue 3: 4.9242975438e-03  residual: 2.366e-02
+  eigenvalue 4: 5.6679356060e-03  residual: 2.132e-03
+  eigenvalue 5: 5.7447664882e-03  residual: 1.295e-02
+it   28  max residual = 1.618e-02
+  eigenvalue 2: 4.0091713558e-03  residual: 3.177e-03
+  eigenvalue 3: 4.8669974541e-03  residual: 1.618e-02
+  eigenvalue 4: 5.6675053329e-03  residual: 1.733e-03
+  eigenvalue 5: 5.7295549946e-03  residual: 8.697e-03
+it   29  max residual = 1.114e-02
+  eigenvalue 2: 4.0080222066e-03  residual: 2.190e-03
+  eigenvalue 3: 4.8379802455e-03  residual: 1.114e-02
+  eigenvalue 4: 5.6671828405e-03  residual: 1.501e-03
+  eigenvalue 5: 5.7215430699e-03  residual: 6.481e-03
+it   30  max residual = 8.204e-03
+  eigenvalue 2: 4.0073812614e-03  residual: 1.593e-03
+  eigenvalue 3: 4.8215859987e-03  residual: 8.204e-03
+  eigenvalue 4: 5.6669341077e-03  residual: 1.383e-03
+  eigenvalue 5: 5.7165574316e-03  residual: 5.345e-03
+it   31  max residual = 6.533e-03
+  eigenvalue 2: 4.0069706029e-03  residual: 1.249e-03
+  eigenvalue 3: 4.8109324330e-03  residual: 6.533e-03
+  eigenvalue 4: 5.6667128658e-03  residual: 1.277e-03
+  eigenvalue 5: 5.7126764475e-03  residual: 4.692e-03
+it   32  max residual = 4.817e-03
+  eigenvalue 2: 4.0067287396e-03  residual: 8.813e-04
+  eigenvalue 3: 4.8042402638e-03  residual: 4.817e-03
+  eigenvalue 4: 5.6665381180e-03  residual: 1.083e-03
+  eigenvalue 5: 5.7097013565e-03  residual: 4.020e-03
+it   33  max residual = 3.389e-03
+  eigenvalue 2: 4.0066110341e-03  residual: 5.945e-04
+  eigenvalue 3: 4.8006797428e-03  residual: 3.389e-03
+  eigenvalue 4: 5.6664213920e-03  residual: 8.388e-04
+  eigenvalue 5: 5.7076628767e-03  residual: 3.204e-03
+it   34  max residual = 3.035e-03
+  eigenvalue 2: 4.0065481752e-03  residual: 4.602e-04
+  eigenvalue 3: 4.7985691931e-03  residual: 2.847e-03
+  eigenvalue 4: 5.6663391246e-03  residual: 8.089e-04
+  eigenvalue 5: 5.7061534276e-03  residual: 3.035e-03
+it   35  max residual = 2.363e-03
+  eigenvalue 2: 4.0065126055e-03  residual: 3.142e-04
+  eigenvalue 3: 4.7971882727e-03  residual: 2.088e-03
+  eigenvalue 4: 5.6662745376e-03  residual: 6.673e-04
+  eigenvalue 5: 5.7049777264e-03  residual: 2.363e-03
+it   36  max residual = 1.900e-03
+  eigenvalue 2: 4.0064947689e-03  residual: 2.121e-04
+  eigenvalue 3: 4.7964047227e-03  residual: 1.500e-03
+  eigenvalue 4: 5.6662350012e-03  residual: 5.333e-04
+  eigenvalue 5: 5.7042468857e-03  residual: 1.900e-03
+it   37  max residual = 1.544e-03
+  eigenvalue 2: 4.0064864820e-03  residual: 1.374e-04
+  eigenvalue 3: 4.7960050898e-03  residual: 1.037e-03
+  eigenvalue 4: 5.6662105037e-03  residual: 4.263e-04
+  eigenvalue 5: 5.7037947249e-03  residual: 1.544e-03
+it   38  max residual = 1.499e-03
+  eigenvalue 2: 4.0064823777e-03  residual: 1.021e-04
+  eigenvalue 3: 4.7957690923e-03  residual: 8.939e-04
+  eigenvalue 4: 5.6661942029e-03  residual: 3.751e-04
+  eigenvalue 5: 5.7034635461e-03  residual: 1.499e-03
+it   39  max residual = 1.293e-03
+  eigenvalue 2: 4.0064799949e-03  residual: 7.424e-05
+  eigenvalue 3: 4.7955973675e-03  residual: 7.075e-04
+  eigenvalue 4: 5.6661821950e-03  residual: 2.954e-04
+  eigenvalue 5: 5.7031660230e-03  residual: 1.293e-03
+it   40  max residual = 1.122e-03
+  eigenvalue 2: 4.0064786829e-03  residual: 5.130e-05
+  eigenvalue 3: 4.7954874532e-03  residual: 5.116e-04
+  eigenvalue 4: 5.6661734226e-03  residual: 2.600e-04
+  eigenvalue 5: 5.7029288165e-03  residual: 1.122e-03
+it   41  max residual = 9.783e-04
+  eigenvalue 2: 4.0064780082e-03  residual: 3.855e-05
+  eigenvalue 3: 4.7954246866e-03  residual: 3.779e-04
+  eigenvalue 4: 5.6661665424e-03  residual: 2.315e-04
+  eigenvalue 5: 5.7027535510e-03  residual: 9.783e-04
+it   42  max residual = 9.174e-04
+  eigenvalue 2: 4.0064776341e-03  residual: 3.085e-05
+  eigenvalue 3: 4.7953865407e-03  residual: 3.224e-04
+  eigenvalue 4: 5.6661607185e-03  residual: 2.123e-04
+  eigenvalue 5: 5.7026098473e-03  residual: 9.174e-04
+it   43  max residual = 9.496e-04
+  eigenvalue 2: 4.0064774099e-03  residual: 2.683e-05
+  eigenvalue 3: 4.7953594151e-03  residual: 3.023e-04
+  eigenvalue 4: 5.6661551508e-03  residual: 2.165e-04
+  eigenvalue 5: 5.7024704251e-03  residual: 9.496e-04
+it   44  max residual = 8.916e-04
+  eigenvalue 2: 4.0064772827e-03  residual: 2.155e-05
+  eigenvalue 3: 4.7953418058e-03  residual: 2.573e-04
+  eigenvalue 4: 5.6661498572e-03  residual: 2.015e-04
+  eigenvalue 5: 5.7023442031e-03  residual: 8.916e-04
+it   45  max residual = 8.372e-04
+  eigenvalue 2: 4.0064772086e-03  residual: 1.921e-05
+  eigenvalue 3: 4.7953305505e-03  residual: 2.399e-04
+  eigenvalue 4: 5.6661454426e-03  residual: 1.836e-04
+  eigenvalue 5: 5.7022426667e-03  residual: 8.372e-04
+it   46  max residual = 7.372e-04
+  eigenvalue 2: 4.0064771654e-03  residual: 1.571e-05
+  eigenvalue 3: 4.7953234622e-03  residual: 2.037e-04
+  eigenvalue 4: 5.6661421922e-03  residual: 1.582e-04
+  eigenvalue 5: 5.7021680138e-03  residual: 7.372e-04
+it   47  max residual = 5.796e-04
+  eigenvalue 2: 4.0064771423e-03  residual: 1.181e-05
+  eigenvalue 3: 4.7953194585e-03  residual: 1.569e-04
+  eigenvalue 4: 5.6661401549e-03  residual: 1.220e-04
+  eigenvalue 5: 5.7021208610e-03  residual: 5.796e-04
+it   48  max residual = 5.624e-04
+  eigenvalue 2: 4.0064771288e-03  residual: 1.039e-05
+  eigenvalue 3: 4.7953169267e-03  residual: 1.456e-04
+  eigenvalue 4: 5.6661387540e-03  residual: 1.163e-04
+  eigenvalue 5: 5.7020875522e-03  residual: 5.624e-04
+it   49  max residual = 5.044e-04
+  eigenvalue 2: 4.0064771190e-03  residual: 8.577e-06
+  eigenvalue 3: 4.7953149006e-03  residual: 1.255e-04
+  eigenvalue 4: 5.6661375431e-03  residual: 1.029e-04
+  eigenvalue 5: 5.7020579160e-03  residual: 5.044e-04
+it   50  max residual = 4.752e-04
+  eigenvalue 2: 4.0064771119e-03  residual: 7.245e-06
+  eigenvalue 3: 4.7953132745e-03  residual: 1.119e-04
+  eigenvalue 4: 5.6661364862e-03  residual: 9.572e-05
+  eigenvalue 5: 5.7020314321e-03  residual: 4.752e-04
+it   51  max residual = 3.683e-04
+  eigenvalue 2: 4.0064771076e-03  residual: 4.964e-06
+  eigenvalue 3: 4.7953121829e-03  residual: 8.101e-05
+  eigenvalue 4: 5.6661356834e-03  residual: 7.425e-05
+  eigenvalue 5: 5.7020111574e-03  residual: 3.683e-04
+it   52  max residual = 3.101e-04
+  eigenvalue 2: 4.0064771051e-03  residual: 3.825e-06
+  eigenvalue 3: 4.7953114785e-03  residual: 6.544e-05
+  eigenvalue 4: 5.6661351081e-03  residual: 6.167e-05
+  eigenvalue 5: 5.7019964677e-03  residual: 3.101e-04
+it   53  max residual = 2.830e-04
+  eigenvalue 2: 4.0064771035e-03  residual: 3.007e-06
+  eigenvalue 3: 4.7953109651e-03  residual: 5.486e-05
+  eigenvalue 4: 5.6661346221e-03  residual: 5.617e-05
+  eigenvalue 5: 5.7019840268e-03  residual: 2.830e-04
+it   54  max residual = 2.283e-04
+  eigenvalue 2: 4.0064771024e-03  residual: 2.108e-06
+  eigenvalue 3: 4.7953105870e-03  residual: 4.060e-05
+  eigenvalue 4: 5.6661341852e-03  residual: 4.515e-05
+  eigenvalue 5: 5.7019728336e-03  residual: 2.283e-04
+it   55  max residual = 2.034e-04
+  eigenvalue 2: 4.0064771018e-03  residual: 1.716e-06
+  eigenvalue 3: 4.7953103333e-03  residual: 3.404e-05
+  eigenvalue 4: 5.6661338317e-03  residual: 3.956e-05
+  eigenvalue 5: 5.7019637053e-03  residual: 2.034e-04
+it   56  max residual = 1.666e-04
+  eigenvalue 2: 4.0064771014e-03  residual: 1.214e-06
+  eigenvalue 3: 4.7953101767e-03  residual: 2.537e-05
+  eigenvalue 4: 5.6661335658e-03  residual: 3.237e-05
+  eigenvalue 5: 5.7019567455e-03  residual: 1.666e-04
+it   57  max residual = 1.325e-04
+  eigenvalue 2: 4.0064771013e-03  residual: 8.736e-07
+  eigenvalue 3: 4.7953100954e-03  residual: 1.881e-05
+  eigenvalue 4: 5.6661333966e-03  residual: 2.585e-05
+  eigenvalue 5: 5.7019523377e-03  residual: 1.325e-04
+  ** Eigenpair 2 converged at iter 57, lambda = 4.0064771013e-03, residual = 8.736e-07
+it   58  max residual = 1.108e-04
+  eigenvalue 3: 4.7953100613e-03  residual: 1.468e-05
+  eigenvalue 4: 5.6661333170e-03  residual: 2.175e-05
+  eigenvalue 5: 5.7019502994e-03  residual: 1.108e-04
+it   59  max residual = 7.966e-05
+  eigenvalue 3: 4.7953100401e-03  residual: 8.829e-06
+  eigenvalue 4: 5.6661332595e-03  residual: 1.571e-05
+  eigenvalue 5: 5.7019488465e-03  residual: 7.966e-05
+it   60  max residual = 7.450e-05
+  eigenvalue 3: 4.7953100302e-03  residual: 7.794e-06
+  eigenvalue 4: 5.6661332302e-03  residual: 1.473e-05
+  eigenvalue 5: 5.7019481105e-03  residual: 7.450e-05
+it   61  max residual = 5.328e-05
+  eigenvalue 3: 4.7953100227e-03  residual: 5.056e-06
+  eigenvalue 4: 5.6661332091e-03  residual: 1.064e-05
+  eigenvalue 5: 5.7019475767e-03  residual: 5.328e-05
+it   62  max residual = 4.900e-05
+  eigenvalue 3: 4.7953100163e-03  residual: 4.649e-06
+  eigenvalue 4: 5.6661331908e-03  residual: 9.806e-06
+  eigenvalue 5: 5.7019471104e-03  residual: 4.900e-05
+it   63  max residual = 5.034e-05
+  eigenvalue 3: 4.7953100101e-03  residual: 4.805e-06
+  eigenvalue 4: 5.6661331721e-03  residual: 1.001e-05
+  eigenvalue 5: 5.7019466266e-03  residual: 5.034e-05
+it   64  max residual = 5.081e-05
+  eigenvalue 3: 4.7953100048e-03  residual: 4.640e-06
+  eigenvalue 4: 5.6661331536e-03  residual: 1.005e-05
+  eigenvalue 5: 5.7019461381e-03  residual: 5.081e-05
+it   65  max residual = 4.629e-05
+  eigenvalue 3: 4.7953100007e-03  residual: 3.889e-06
+  eigenvalue 4: 5.6661331367e-03  residual: 9.159e-06
+  eigenvalue 5: 5.7019456904e-03  residual: 4.629e-05
+it   66  max residual = 4.143e-05
+  eigenvalue 3: 4.7953099980e-03  residual: 3.283e-06
+  eigenvalue 4: 5.6661331230e-03  residual: 8.174e-06
+  eigenvalue 5: 5.7019453240e-03  residual: 4.143e-05
+it   67  max residual = 2.888e-05
+  eigenvalue 3: 4.7953099962e-03  residual: 2.396e-06
+  eigenvalue 4: 5.6661331125e-03  residual: 5.651e-06
+  eigenvalue 5: 5.7019450394e-03  residual: 2.888e-05
+it   68  max residual = 2.167e-05
+  eigenvalue 3: 4.7953099952e-03  residual: 1.900e-06
+  eigenvalue 4: 5.6661331062e-03  residual: 4.191e-06
+  eigenvalue 5: 5.7019448672e-03  residual: 2.167e-05
+it   69  max residual = 1.253e-05
+  eigenvalue 3: 4.7953099946e-03  residual: 1.028e-06
+  eigenvalue 4: 5.6661331025e-03  residual: 2.432e-06
+  eigenvalue 5: 5.7019447673e-03  residual: 1.253e-05
+it   70  max residual = 8.190e-06
+  eigenvalue 3: 4.7953099943e-03  residual: 6.608e-07
+  eigenvalue 4: 5.6661331002e-03  residual: 1.600e-06
+  eigenvalue 5: 5.7019447055e-03  residual: 8.190e-06
+  ** Eigenpair 3 converged at iter 70, lambda = 4.7953099943e-03, residual = 6.608e-07
+it   71  max residual = 7.690e-06
+  eigenvalue 4: 5.6661330992e-03  residual: 1.479e-06
+  eigenvalue 5: 5.7019446791e-03  residual: 7.690e-06
+it   72  max residual = 6.021e-06
+  eigenvalue 4: 5.6661330978e-03  residual: 1.150e-06
+  eigenvalue 5: 5.7019446400e-03  residual: 6.021e-06
+it   73  max residual = 6.370e-06
+  eigenvalue 4: 5.6661330967e-03  residual: 1.239e-06
+  eigenvalue 5: 5.7019446121e-03  residual: 6.370e-06
+it   74  max residual = 8.753e-06
+  eigenvalue 4: 5.6661330960e-03  residual: 1.685e-06
+  eigenvalue 5: 5.7019445913e-03  residual: 8.753e-06
+it   75  max residual = 8.978e-06
+  eigenvalue 4: 5.6661330953e-03  residual: 1.713e-06
+  eigenvalue 5: 5.7019445729e-03  residual: 8.978e-06
+it   76  max residual = 8.243e-06
+  eigenvalue 4: 5.6661330948e-03  residual: 1.563e-06
+  eigenvalue 5: 5.7019445576e-03  residual: 8.243e-06
+it   77  max residual = 7.594e-06
+  eigenvalue 4: 5.6661330943e-03  residual: 1.429e-06
+  eigenvalue 5: 5.7019445438e-03  residual: 7.594e-06
+it   78  max residual = 6.777e-06
+  eigenvalue 4: 5.6661330938e-03  residual: 1.267e-06
+  eigenvalue 5: 5.7019445305e-03  residual: 6.777e-06
+it   79  max residual = 4.670e-06
+  eigenvalue 4: 5.6661330934e-03  residual: 8.654e-07
+  eigenvalue 5: 5.7019445205e-03  residual: 4.670e-06
+  ** Eigenpair 4 converged at iter 79, lambda = 5.6661330934e-03, residual = 8.654e-07
+it   80  max residual = 4.459e-06
+  eigenvalue 5: 5.7019445163e-03  residual: 4.459e-06
+it   81  max residual = 4.404e-06
+  eigenvalue 5: 5.7019445133e-03  residual: 4.404e-06
+it   82  max residual = 2.911e-06
+  eigenvalue 5: 5.7019445108e-03  residual: 2.911e-06
+it   83  max residual = 1.828e-06
+  eigenvalue 5: 5.7019445094e-03  residual: 1.828e-06
+it   84  max residual = 1.652e-06
+  eigenvalue 5: 5.7019445083e-03  residual: 1.652e-06
+it   85  max residual = 2.035e-06
+  eigenvalue 5: 5.7019445074e-03  residual: 2.035e-06
+it   86  max residual = 2.345e-06
+  eigenvalue 5: 5.7019445066e-03  residual: 2.345e-06
+it   87  max residual = 1.894e-06
+  eigenvalue 5: 5.7019445059e-03  residual: 1.894e-06
+it   88  max residual = 1.127e-06
+  eigenvalue 5: 5.7019445054e-03  residual: 1.127e-06
+it   89  max residual = 1.215e-06
+  eigenvalue 5: 5.7019445049e-03  residual: 1.215e-06
+it   90  max residual = 1.138e-06
+  eigenvalue 5: 5.7019445045e-03  residual: 1.138e-06
+it   91  max residual = 1.114e-06
+  eigenvalue 5: 5.7019445042e-03  residual: 1.114e-06
+it   92  max residual = 7.578e-07
+  eigenvalue 5: 5.7019445041e-03  residual: 7.578e-07
+  ** Eigenpair 5 converged at iter 92, lambda = 5.7019445041e-03, residual = 7.578e-07
+========================================
+LOBPCG: All 5 eigenpairs converged at iteration 92
+
+======================================================
+LOBPCG Summary Results
+======================================================
+  Iterations        : 92
+  Converged         : 5 / 5
+  Time (seconds)    : 1.3029
+  Mode              : laplacian
+  Preconditioner    : GS_it2
+
+Computed Eigenvalues:
+  lambda[0] = 2.756277294334815e-16
+  lambda[1] = 4.006477101270093e-03
+  lambda[2] = 4.795309994340153e-03
+  lambda[3] = 5.666133093433060e-03
+  lambda[4] = 5.701944504060581e-03
+======================================================

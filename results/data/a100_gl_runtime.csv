@@ -1,0 +1,26 @@
+﻿Matrix,Preconditioner,Execution Time (in seconds)
+adaptive,Gauss-Seidel,456.28856
+adaptive,Two Stage GS,507.03898
+adaptive,Two Stage Jac+GS,27.718125
+adaptive,line Jacobi,12.893075
+adaptive,iterative Jacobi,477.758475
+delaunay_n24,Gauss-Seidel,660.92606
+delaunay_n24,Two Stage GS,205.63882
+delaunay_n24,Two Stage Jac+GS,219.21544
+delaunay_n24,line Jacobi,54.4771
+delaunay_n24,iterative Jacobi,57.9029
+hugebubbles-00000,Gauss-Seidel,741.4882
+hugebubbles-00000,Two Stage GS,1741.779
+hugebubbles-00000,Two Stage Jac+GS,379.829475
+hugebubbles-00000,line Jacobi,
+hugebubbles-00000,iterative Jacobi,105.22955
+t60k,Gauss-Seidel,11.71534
+t60k,Two Stage GS,1.39242
+t60k,Two Stage Jac+GS,0.23766
+t60k,line Jacobi,0.248325
+t60k,iterative Jacobi,0.1998
+road_central,Gauss-Seidel,935.81
+road_central,Two Stage GS,
+road_central,Two Stage Jac+GS,195.63
+road_central,line Jacobi,
+road_central,iterative Jacobi,201.32

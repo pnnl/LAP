@@ -1,0 +1,6 @@
+# Generated figures are not tracked.
+plots/*
+!plots/.gitkeep
+
+# Re-include raw LOBPCG outputs (the repo root ignores *.txt).
+!*.txt

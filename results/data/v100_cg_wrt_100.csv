@@ -1,0 +1,26 @@
+﻿Matrix,Preconditioner,Normalized runtime w.r.t. A100
+Serena,Gauss-Seidel,0.350356205
+Serena,Two Stage Gauss-Seidel (GS_it),
+Serena,Jacobi + Two Stage Gauss-Seidel (GS_it2),1.505194971
+Serena,Jacobi,0.984839796
+Serena,Incomple Cholesky,
+G3_circuit,Gauss-Seidel,0.441594376
+G3_circuit,Two Stage Gauss-Seidel (GS_it),
+G3_circuit,Jacobi + Two Stage Gauss-Seidel (GS_it2),1.459863577
+G3_circuit,Jacobi,1.524285626
+G3_circuit,Incomple Cholesky,0.43457823
+thermal2,Gauss-Seidel,0.466193932
+thermal2,Two Stage Gauss-Seidel (GS_it),1.619506109
+thermal2,Jacobi + Two Stage Gauss-Seidel (GS_it2),1.553516696
+thermal2,Jacobi,1.655273685
+thermal2,Incomple Cholesky,0.460391791
+af_0_k101,Gauss-Seidel,0.289979345
+af_0_k101,Two Stage Gauss-Seidel (GS_it),
+af_0_k101,Jacobi + Two Stage Gauss-Seidel (GS_it2),1.512658833
+af_0_k101,Jacobi,
+af_0_k101,Incomple Cholesky,0.287420805
+af_5_k101,Gauss-Seidel,0.280180076
+af_5_k101,Two Stage Gauss-Seidel (GS_it),
+af_5_k101,Jacobi + Two Stage Gauss-Seidel (GS_it2),1.487240514
+af_5_k101,Jacobi,1.461318908
+af_5_k101,Incomple Cholesky,0.314044662

@@ -1,0 +1,11 @@
+﻿Matrix,Preconditioner,Normalized runtime w.r.t. A100
+adaptive,Gauss-Seidel,0.012326849
+adaptive,Two Stage GS,0.011221031
+adaptive,Two Stage Jac+GS,95.23945794
+adaptive,line Jacobi,92.53029242
+adaptive,iterative Jacobi,92.22328458
+t60k,Gauss-Seidel,3.330923388
+t60k,Two Stage GS,29.50977435
+t60k,Two Stage Jac+GS,17.46739039
+t60k,line Jacobi,17.92167522
+t60k,iterative Jacobi,17.91841842

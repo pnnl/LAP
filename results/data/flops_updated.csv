@@ -1,0 +1,79 @@
+﻿Matrix,Preconditioner,Flops (log10 scale)
+Serena,Gauss-Seidel,11.46384471
+Serena,Two Stage GS,0
+Serena,Two Stage Jac+GS,12.21512686
+Serena,line Jacobi,11.37267964
+Serena,iterative Jacobi,0
+Serena,Incomple Cholesky,0
+G3_circuit,Gauss-Seidel,11.24408857
+G3_circuit,Two Stage GS,0
+G3_circuit,Two Stage Jac+GS,11.18336896
+G3_circuit,line Jacobi,11.25038184
+G3_circuit,iterative Jacobi,11.11359366
+G3_circuit,Incomple Cholesky,10.84159294
+thermal2,Gauss-Seidel,11.42868463
+thermal2,Two Stage GS,12.26004834
+thermal2,Two Stage Jac+GS,11.32025711
+thermal2,line Jacobi,11.3230077
+thermal2,iterative Jacobi,11.2299829
+thermal2,Incomple Cholesky,11.13740046
+af_0_k101,Gauss-Seidel,12.63660398
+af_0_k101,Two Stage GS,0
+af_0_k101,Two Stage Jac+GS,12.73774179
+af_0_k101,line Jacobi,0
+af_0_k101,iterative Jacobi,12.56513882
+af_0_k101,Incomple Cholesky,12.03597211
+af_5_k101,Gauss-Seidel,
+af_5_k101,Two Stage GS,
+af_5_k101,Two Stage Jac+GS,
+af_5_k101,line Jacobi,
+af_5_k101,iterative Jacobi,
+af_5_k101,Incomple Cholesky,
+adaptive,Gauss-Seidel,12.21372955
+adaptive,Two Stage GS,0
+adaptive,Two Stage Jac+GS,12.2037548
+adaptive,line Jacobi,12.0564871
+adaptive,iterative Jacobi,13.41597235
+adaptive,Incomple Cholesky,0
+delaunay_n24,Gauss-Seidel,12.92788018
+delaunay_n24,Two Stage GS,13.23675829
+delaunay_n24,Two Stage Jac+GS,13.22101751
+delaunay_n24,line Jacobi,12.75819432
+delaunay_n24,iterative Jacobi,12.70431796
+delaunay_n24,Incomple Cholesky,0
+hugebubbles-00000,Gauss-Seidel,12.97375385
+hugebubbles-00000,Two Stage GS,13.99357175
+hugebubbles-00000,Two Stage Jac+GS,13.26023422
+hugebubbles-00000,line Jacobi,0
+hugebubbles-00000,iterative Jacobi,12.83725557
+hugebubbles-00000,Incomple Cholesky,0
+t60k,Gauss-Seidel,9.27397238
+t60k,Two Stage GS,10.17640729
+t60k,Two Stage Jac+GS,9.212489198
+t60k,line Jacobi,9.310991786
+t60k,iterative Jacobi,9.168855394
+t60k,Incomple Cholesky,0
+road_central,Gauss-Seidel,13.03279418
+road_central,Two Stage GS,
+road_central,Two Stage Jac+GS,12.95434136
+road_central,line Jacobi,13.22092948
+road_central,iterative Jacobi,12.9687613
+road_central,Incomple Cholesky,
+road_usa,Gauss-Seidel,
+road_usa,Two Stage GS,
+road_usa,Two Stage Jac+GS,
+road_usa,line Jacobi,
+road_usa,iterative Jacobi,
+road_usa,Incomple Cholesky,
+great_britain_osm,Gauss-Seidel,
+great_britain_osm,Two Stage GS,
+great_britain_osm,Two Stage Jac+GS,
+great_britain_osm,line Jacobi,
+great_britain_osm,iterative Jacobi,
+great_britain_osm,Incomple Cholesky,
+italy_osm,Gauss-Seidel,
+italy_osm,Two Stage GS,
+italy_osm,Two Stage Jac+GS,
+italy_osm,line Jacobi,
+italy_osm,iterative Jacobi,
+italy_osm,Incomple Cholesky,

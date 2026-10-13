@@ -1,0 +1,25 @@
+﻿Matrix,Preconditioner,Flops (log10 scale)
+adaptive,Gauss-Seidel,12.21372955
+adaptive,Two Stage Gauss-Seidel (GS_it),13.50932138
+adaptive,Jacobi + Two Stage Gauss-Seidel (GS_it2),12.2037548
+adaptive,Jacobi,12.93898188
+delaunay_n24,Gauss-Seidel,12.92788018
+delaunay_n24,Two Stage Gauss-Seidel (GS_it),13.23675829
+delaunay_n24,Jacobi + Two Stage Gauss-Seidel (GS_it2),13.22101751
+delaunay_n24,Jacobi,12.75819559
+hugebubbles-00000,Gauss-Seidel,12.97375385
+hugebubbles-00000,Two Stage Gauss-Seidel (GS_it),13.99357175
+hugebubbles-00000,Jacobi + Two Stage Gauss-Seidel (GS_it2),13.26023422
+hugebubbles-00000,Jacobi,12.85574205
+road_cental ,Gauss-Seidel,13.03279418
+road_cental ,Two Stage Gauss-Seidel (GS_it),
+road_cental ,Jacobi + Two Stage Gauss-Seidel (GS_it2),12.95434136
+road_cental ,Jacobi,12.98271843
+road_usa,Gauss-Seidel,13.4914329
+road_usa,Two Stage Gauss-Seidel (GS_it),
+road_usa,Jacobi + Two Stage Gauss-Seidel (GS_it2),13.4994973
+road_usa,Jacobi,13.49317271
+italy_osm,Gauss-Seidel,13.11607575
+italy_osm,Two Stage Gauss-Seidel (GS_it),
+italy_osm,Jacobi + Two Stage Gauss-Seidel (GS_it2),13.27664541
+italy_osm,Jacobi,13.16790331

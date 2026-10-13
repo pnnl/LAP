@@ -1,0 +1,21 @@
+﻿Matrix,Preconditioner,Energy
+adaptive,Gauss-Seidel,43.76980949
+adaptive,Two Stage GS,119.8724235
+adaptive,Two Stage Jac+GS,6.35324872
+adaptive,line Jacobi,2.872705752
+adaptive,iterative Jacobi,108.8238619
+delaunay_n24,Gauss-Seidel,145.6602777
+delaunay_n24,Two Stage GS,57.86300366
+delaunay_n24,Two Stage Jac+GS,61.34218844
+delaunay_n24,line Jacobi,14.47681183
+delaunay_n24,iterative Jacobi,15.5149075
+hugebubbles-00000,Gauss-Seidel,179.2084471
+hugebubbles-00000,Two Stage GS,468.0706595
+hugebubbles-00000,Two Stage Jac+GS,94.7187072
+hugebubbles-00000,line Jacobi,
+hugebubbles-00000,iterative Jacobi,26.73405166
+t60k,Gauss-Seidel,0.874131432
+t60k,Two Stage GS,0.06335066
+t60k,Two Stage Jac+GS,0.005771673
+t60k,line Jacobi,0.00867582
+t60k,iterative Jacobi,0.005506887
