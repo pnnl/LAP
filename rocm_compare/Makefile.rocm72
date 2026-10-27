@@ -1,0 +1,27 @@
+# HIP drivers from the lobpcg branch (legacy rocSPARSE API), built with ROCm 7.2.1 (rocSPARSE 4.2.0).
+# This branch needs rocSPARSE >= 4.6, so the sources are taken from lobpcg with git archive.
+# lap_hip_laplacian on lobpcg calls dot() before initialize_handles(), so cg_driver.c is taken
+# from this branch, where that is fixed.
+# Produces build_rocm72/lap_hip_rocm72_{laplacian,cg,spmv,lobpcg}.
+#
+#   module load rocm/7.2 gcc
+#   make -f Makefile.rocm72            # make -f Makefile.rocm72 clean to start over
+
+HERE      := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+REPO      := $(abspath $(HERE)..)
+BUILD     := $(HERE)build_rocm72
+BRANCH    ?= lobpcg
+ROCM_PATH ?= /opt/rocm-7.2.1
+HIP_ARCH  ?= gfx942 gfx950
+
+.PHONY: all clean
+
+all:
+	mkdir -p $(BUILD)
+	git -C $(REPO) archive $(BRANCH) | tar -x -C $(BUILD)
+	cp -p $(REPO)/cg_driver.c $(BUILD)/
+	$(MAKE) -C $(BUILD) BACKEND=hip HIPCC=$(ROCM_PATH)/bin/hipcc ROCM_PATH=$(ROCM_PATH) EXE_PREFIX=lap_hip_rocm72 \
+	        HIP_FLAGS="-D__HIP_PLATFORM_HCC__ $(addprefix --offload-arch=,$(HIP_ARCH))" all
+
+clean:
+	rm -rf $(BUILD)

@@ -1,0 +1,22 @@
+# HIP drivers from this branch, built against stock ROCm 10.1.0 (its own rocSPARSE 5.1.0).
+# Produces build_rocm101/lap_hip_rocm101_{laplacian,cg,spmv,lobpcg}.
+#
+#   module load rocm/10.1.0
+#   make -f Makefile.rocm101           # make -f Makefile.rocm101 clean to start over
+
+HERE      := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+REPO      := $(abspath $(HERE)..)
+BUILD     := $(HERE)build_rocm101
+ROCM_PATH ?= /share/spack/external/rocm/rocm-10.1.0
+HIP_ARCH  ?= gfx942 gfx950
+
+.PHONY: all clean
+
+all:
+	mkdir -p $(BUILD)
+	cd $(REPO) && cp -p $$(git ls-files '*.c' '*.cpp' '*.h' '*.cu') Makefile $(BUILD)/
+	$(MAKE) -C $(BUILD) BACKEND=hip HIPCC=$(ROCM_PATH)/bin/hipcc ROCM_PATH=$(ROCM_PATH) \
+	        HIP_ARCH="$(HIP_ARCH)" EXE_PREFIX=lap_hip_rocm101 all
+
+clean:
+	rm -rf $(BUILD)

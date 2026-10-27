@@ -156,7 +156,6 @@ int main(int argc, char *argv[])
     d[i] = D->csr_vals[i];   
   }
 
-  printf("norm of b (initial): %17.17e \n", dot(A->n, b, b)); 
 #if (CUDA || HIP)
 
   initialize_handles();
@@ -184,6 +183,8 @@ int main(int argc, char *argv[])
   e   = d_e;
   d   = d_d;
 #endif
+  /* On GPU backends dot() needs device vectors and initialize_handles() */
+  printf("norm of b (initial): %17.17e \n", dot(A->n, b, b)); 
 
   real_type norme = (real_type) sqrt(A->n);  
  real_type one_over_norme = 1./norme;

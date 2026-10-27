@@ -1,0 +1,24 @@
+# HIP drivers from this branch, built against the custom rocSPARSE from rocm-libraries and
+# ROCm 10.1.0 for everything else.
+# Produces build_custom/lap_hip_custom_{laplacian,cg,spmv,lobpcg}.
+#
+#   module load rocm/10.1.0
+#   make -f Makefile.custom            # make -f Makefile.custom clean to start over
+
+HERE           := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+REPO           := $(abspath $(HERE)..)
+BUILD          := $(HERE)build_custom
+ROCM_PATH      ?= /share/spack/external/rocm/rocm-10.1.0
+ROCSPARSE_PATH ?= /home/kswirydo/rocm-libraries/projects/rocsparse/install_ks
+HIP_ARCH       ?= gfx942 gfx950
+
+.PHONY: all clean
+
+all:
+	mkdir -p $(BUILD)
+	cd $(REPO) && cp -p $$(git ls-files '*.c' '*.cpp' '*.h' '*.cu') Makefile $(BUILD)/
+	$(MAKE) -C $(BUILD) BACKEND=hip HIPCC=$(ROCM_PATH)/bin/hipcc ROCM_PATH=$(ROCM_PATH) \
+	        ROCSPARSE_PATH=$(ROCSPARSE_PATH) HIP_ARCH="$(HIP_ARCH)" EXE_PREFIX=lap_hip_custom all
+
+clean:
+	rm -rf $(BUILD)

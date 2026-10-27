@@ -30,6 +30,8 @@
 # Optional variables:
 #   CUDA_ARCH  - CUDA architecture (default: sm_80)
 #   ROCM_PATH  - Path to ROCm installation (default: /opt/rocm)
+#   ROCSPARSE_PATH - Path to rocSPARSE installation, e.g. a custom build (default: ROCM_PATH)
+#   HIP_ARCH   - AMD GPU targets, e.g. "gfx942 gfx950" (default: hipcc default)
 #   DEBUG      - Set to 1 for debug build (default: 0)
 # ==============================================================================
 
@@ -39,6 +41,8 @@ BACKEND ?= noacc
 # Optional settings
 CUDA_ARCH ?= sm_80
 ROCM_PATH ?= /opt/rocm
+ROCSPARSE_PATH ?= $(ROCM_PATH)
+HIP_ARCH ?=
 DEBUG ?= 0
 
 # ==============================================================================
@@ -126,9 +130,16 @@ else ifeq ($(BACKEND),hip)
     CONF_FLAGS := -DV100=0 -DNOACC=0 -DCUDA=0 -DOPENMP=0 -DHIP=1 -DUSE_FP64=1
     
     COMPILER     := $(HIPCC)
-    HIP_FLAGS    := -D__HIP_PLATFORM_HCC__
-    HIP_INCLUDES := -I$(ROCM_PATH)/include/rocblas -I$(ROCM_PATH)/include/rocsparse
+    HIP_FLAGS    := -D__HIP_PLATFORM_HCC__ $(addprefix --offload-arch=,$(HIP_ARCH))
+    HIP_INCLUDES := -I$(ROCSPARSE_PATH)/include -I$(ROCSPARSE_PATH)/include/rocsparse -I$(ROCM_PATH)/include/rocblas
     HIP_LIBS     := -L$(ROCM_PATH)/lib -lrocsparse -lrocblas -lrocsolver -lhiprand
+    ifneq ($(ROCSPARSE_PATH),$(ROCM_PATH))
+        # DT_RPATH is searched before LD_LIBRARY_PATH (RUNPATH is not), so a ROCm lib dir there
+        # cannot replace the custom rocSPARSE. ROCm's clang config forces --enable-new-dtags, so
+        # the link skips it (--no-default-config) and sets its --rocm-path and rpath explicitly.
+        HIP_LIBS := --no-default-config --rocm-path=$(ROCM_PATH) -L$(ROCSPARSE_PATH)/lib \
+                    -Wl,--disable-new-dtags,-rpath,$(ROCSPARSE_PATH)/lib,-rpath,$(ROCM_PATH)/lib $(HIP_LIBS)
+    endif
     
     BACKEND_OBJS := hip_blas.o devMem.o
     COMMON_OBJS  := simple_blas.o blas.o GS.o it_jacobi.o line_jacobi.o prec.o cg.o io_utils.o
@@ -136,8 +147,9 @@ else ifeq ($(BACKEND),hip)
     EXE_PREFIX   := lap_hip
     
     # Compilation rules for HIP
+    # -fPIE: newer hipcc links position-independent executables by default
     define COMPILE_C
-		$(CXX) $(CONF_FLAGS) $(OPT_FLAGS) -o $@ -c $<
+		$(CXX) $(CONF_FLAGS) $(OPT_FLAGS) -fPIE -o $@ -c $<
     endef
     
     define COMPILE_CPP
@@ -304,6 +316,8 @@ help:
 	@echo "Optional variables:"
 	@echo "  CUDA_ARCH=<arch>  - CUDA architecture (default: sm_80)"
 	@echo "  ROCM_PATH=<path>  - Path to ROCm installation (default: /opt/rocm)"
+	@echo "  ROCSPARSE_PATH=<path> - Path to rocSPARSE installation (default: ROCM_PATH)"
+	@echo "  HIP_ARCH=<archs>  - AMD GPU targets, e.g. \"gfx942 gfx950\" (default: hipcc default)"
 	@echo "  DEBUG=1           - Enable debug build (default: 0)"
 	@echo ""
 	@echo "Examples:"
@@ -315,5 +329,6 @@ help:
 	@echo "  make BACKEND=hip lobpcg             # Build only LOBPCG with HIP"
 	@echo "  make BACKEND=cuda CUDA_ARCH=sm_70    # Build with different CUDA arch"
 	@echo "  make BACKEND=hip ROCM_PATH=/opt/rocm-5.0  # Use specific ROCm path"
+	@echo "  make BACKEND=hip ROCSPARSE_PATH=<rocsparse install> HIP_ARCH=\"gfx942 gfx950\"  # Custom rocSPARSE"
 	@echo "  make clean                           # Clean all build artifacts"
 	@echo ""
